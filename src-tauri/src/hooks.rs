@@ -284,6 +284,12 @@ fn attended() -> bool {
     !std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok_and(|e| e.starts_with("sdk"))
 }
 
+/// The team and agent this session runs for, when Headroom started it as a manager for a team from the planner
+/// (`<run>:<agent>`). It runs in the background, so nobody's there to answer, but messages from the user reach it.
+fn team() -> Option<String> {
+    std::env::var("HEADROOM_TEAM").ok().filter(|t| !t.is_empty())
+}
+
 fn asking_file(session: &str) -> Option<PathBuf> {
     Some(asking_dir()?.join(session.replace(['/', '.'], "")))
 }
@@ -1074,7 +1080,9 @@ fn interjections(name: &str, event: &Value) -> Option<String> {
     let session = event["session_id"].as_str().filter(|s| !s.is_empty())?;
     let subagent = event["agent_id"].as_str().is_some_and(|id| !id.is_empty());
     let delivers = matches!(name, "PostToolUse" | "PostToolUseFailure" | "Stop" | "UserPromptSubmit");
-    (delivers && waited_on() && attended() && !subagent).then(|| take_interjections(session)).flatten()
+    (delivers && waited_on() && (attended() || team().is_some()) && !subagent)
+        .then(|| take_interjections(session))
+        .flatten()
 }
 
 /// Is a message from the list waiting for this session to take it?
@@ -1287,6 +1295,9 @@ fn keep(event: &Value) -> Value {
     // Nobody to send it anything from the list
     if !attended() {
         out.insert("unattended".into(), true.into());
+    }
+    if let Some(team) = team() {
+        out.insert("team".into(), team.into());
     }
     out.insert("at".into(), chrono::Utc::now().timestamp_millis().into());
     Value::Object(out)
