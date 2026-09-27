@@ -290,11 +290,14 @@ function Inspector({
   selected,
   onAgent,
   onEdge,
+  onDelete,
 }: {
   plan: Plan;
   selected: string | null;
   onAgent: (a: Agent) => void;
   onEdge: (e: Edge) => void;
+  /** Take away what's picked */
+  onDelete: () => void;
 }) {
   const [picking, setPicking] = useState(false);
   const [command, setCommand] = useState("");
@@ -337,7 +340,10 @@ function Inspector({
             </div>
           </>
         )}
-        <div className="inspector-hint delete-hint">⌫ removes this arrow.</div>
+        <span className="inspector-delete-room" />
+        <button className="ask-btn delete" onClick={onDelete}>
+          Delete Arrow <kbd>⌫</kbd>
+        </button>
       </div>
     );
   }
@@ -442,7 +448,10 @@ function Inspector({
         Keep going until…
       </label>
       {a.until !== undefined && <input className="inspector-field" value={a.until} onChange={(ev) => onAgent({ ...a, until: ev.target.value })} />}
-      <div className="inspector-hint delete-hint">⌫ removes this agent and its arrows.</div>
+      <span className="inspector-delete-room" />
+      <button className="ask-btn delete" onClick={onDelete} title="Its arrows go with it">
+        Delete Agent <kbd>⌫</kbd>
+      </button>
     </div>
   );
 }
@@ -551,8 +560,13 @@ export function PlannerWindow() {
       save();
       return;
     }
-    if (!plan || !selected || (e.key !== "Backspace" && e.key !== "Delete")) return;
+    if (e.key !== "Backspace" && e.key !== "Delete") return;
     if ((e.target as Element).closest("input, textarea")) return;
+    remove();
+  };
+  // The agent or arrow that's picked, and an agent's arrows with it
+  const remove = () => {
+    if (!plan || !selected) return;
     const agents = plan.agents.filter((a) => a.id !== selected);
     const edges = plan.edges.filter((x) => edgeId(x) !== selected && x.from !== selected && x.to !== selected);
     change({ ...plan, agents, edges });
@@ -688,6 +702,7 @@ export function PlannerWindow() {
           selected={selected}
           onAgent={setAgent}
           onEdge={(e) => change({ ...plan, edges: plan.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
+          onDelete={remove}
         />
       </div>
       {starting && <StartSheet plan={plan} onClose={() => setStarting(false)} />}

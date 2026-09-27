@@ -508,8 +508,24 @@ html.browser body:has(.planner) {
 .inspector .icon-picker {
   margin: 4px 0 8px;
 }
-.delete-hint {
-  margin-top: 18px;
+/* Deleting goes at the bottom of the panel, out of the way of everything else in it */
+.inspector:not(.empty) {
+  display: flex;
+  flex-direction: column;
+}
+.inspector:not(.empty) > * {
+  flex: none;
+}
+.ask-btn.delete {
+  align-self: flex-start;
+  color: var(--pop-red);
+}
+.inspector .inspector-delete-room {
+  flex: 1 0 18px;
+}
+/* A flex column doesn't let margins overlap, so a label's and the checkbox's under it would add up */
+.inspector:not(.empty) .inspector-label + .inspector-check {
+  margin-top: 0;
 }
 
 .sheet-backdrop {
