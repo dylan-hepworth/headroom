@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
-import { bridge } from "./bridge";
+import { bridge, type TeamRun } from "./bridge";
 import "./plan.css";
 import "./popover.css";
 
@@ -102,32 +102,24 @@ const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const clause = (s: string) => lower(s.trim().replace(/[.!\s]+$/, ""));
 const list = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
-/** The plan in words, for the chat to run. Workers come in the order their work flows: each one after the workers that
- *  hand it theirs. */
-export function verbalize(plan: Plan): string {
-  const lead = plan.agents.find((a) => a.role === "Lead");
-  if (!lead) return "";
-  const byId = (id: string) => plan.agents.find((a) => a.id === id)!;
-  const lines: string[] = [
-    `Work through this with a team, the way I've planned it. You're the ${lead.name}${lead.brief.trim() ? `: ${clause(lead.brief)}` : ""}.`,
-    `Run each agent below as a subagent of your own, with the model it's given, and use its name as the subagent's description, so I can follow each one. Where an agent waits for others, start it once they're done.`,
-  ];
-  const say = (a: Agent) => {
-    const waits = plan.edges.filter((e) => e.to === a.id && !e.loop && byId(e.from).role === "Worker").map((e) => byId(e.from).name);
-    const parts = [`- ${a.name} (${a.model})${a.brief.trim() ? `: ${clause(a.brief)}` : ""}.`];
-    if (waits.length) parts.push(`It starts once ${list(waits)} ${waits.length === 1 ? "is" : "are"} done.`);
-    for (const e of plan.edges.filter((e) => e.to === a.id && e.loop)) {
-      parts.push(
-        `It reviews ${byId(e.from).name}'s work: send it back to ${byId(e.from).name} until ${clause(e.loop!.until)}, ${e.loop!.rounds} rounds at most.`,
-      );
-    }
-    if (a.until) parts.push(`It keeps going until ${clause(a.until)}.`);
-    if (a.commands.length) parts.push(`It may use ${list(a.commands)}.`);
-    if (a.tools.length && a.tools.length < TOOLS.length) parts.push(`It should only ${list(a.tools.map(lower))}.`);
-    lines.push(parts.join(" "));
-  };
-  // Workers in flow order, grouped under the manager whose team they're in
-  const workers = plan.agents.filter((a) => a.role === "Worker");
+/** What's said about one agent: what it's for, what it waits for, how it loops, and what it may use. */
+function describe(plan: Plan, a: Agent) {
+  const byId = (id: string) => plan.agents.find((x) => x.id === id)!;
+  const waits = plan.edges.filter((e) => e.to === a.id && !e.loop && byId(e.from).role === "Worker").map((e) => byId(e.from).name);
+  const parts = [a.brief.trim() ? `${clause(a.brief)}.` : ""];
+  if (waits.length) parts.push(`It starts once ${list(waits)} ${waits.length === 1 ? "is" : "are"} done.`);
+  for (const e of plan.edges.filter((e) => e.to === a.id && e.loop)) {
+    const from = byId(e.from).name;
+    parts.push(`It reviews ${from}'s work: send it back to ${from} until ${clause(e.loop!.until)}, ${e.loop!.rounds} rounds at most.`);
+  }
+  if (a.until) parts.push(`It keeps going until ${clause(a.until)}.`);
+  if (a.commands.length) parts.push(`It may use ${list(a.commands)}.`);
+  return parts.filter(Boolean).join(" ");
+}
+
+/** The workers in the order their work flows: each after the workers that hand it theirs. */
+function inFlow(plan: Plan): Agent[] {
+  const byId = (id: string) => plan.agents.find((x) => x.id === id)!;
   const placed: Agent[] = [];
   const place = (a: Agent, path = new Set<string>()) => {
     if (placed.includes(a) || path.has(a.id)) return;
@@ -135,11 +127,30 @@ export function verbalize(plan: Plan): string {
     plan.edges.filter((e) => e.to === a.id && !e.loop && byId(e.from).role === "Worker").forEach((e) => place(byId(e.from), path));
     placed.push(a);
   };
-  workers.forEach((a) => place(a));
+  plan.agents.filter((a) => a.role === "Worker").forEach((a) => place(a));
+  return placed;
+}
+
+/** The workers on a manager's team, or with none, the ones that report to the lead directly. One in more than one
+ *  team goes with the first (the planner says so). */
+const teamFor = (plan: Plan, manager: string | null) => inFlow(plan).filter((a) => (teamOf(plan, a.id)[0] ?? null) === manager);
+
+/** The plan in words, for the chat to run it all itself: every worker a subagent of its own, grouped under its manager,
+ *  whose words guide the lead. */
+export function verbalize(plan: Plan): string {
+  const lead = plan.agents.find((a) => a.role === "Lead");
+  if (!lead) return "";
+  const lines: string[] = [
+    `Work through this with a team, the way I've planned it. You're the ${lead.name}${lead.brief.trim() ? `: ${clause(lead.brief)}` : ""}.`,
+    `Run each agent below as a subagent of your own, with the model it's given, and use its name as the subagent's description, so I can follow each one. Where an agent waits for others, start it once they're done.`,
+  ];
+  const say = (a: Agent) => {
+    const tools = a.tools.length && a.tools.length < TOOLS.length ? ` It should only ${list(a.tools.map(lower))}.` : "";
+    lines.push(`- ${a.name} (${a.model}): ${describe(plan, a)}${tools}`.replace(": .", "."));
+  };
   const managers = plan.agents.filter((a) => a.role === "Manager");
   for (const m of managers) {
-    // One in more than one team goes with the first (the planner says so)
-    const team = placed.filter((a) => teamOf(plan, a.id)[0] === m.id);
+    const team = teamFor(plan, m.id);
     if (!team.length) continue;
     lines.push(
       "",
@@ -147,13 +158,84 @@ export function verbalize(plan: Plan): string {
     );
     team.forEach(say);
   }
-  const loose = placed.filter((a) => teamOf(plan, a.id).length === 0);
+  const loose = teamFor(plan, null);
   if (loose.length) {
     lines.push("", managers.length ? "Reporting to you directly:" : "The team:");
     loose.forEach(say);
   }
   lines.push("", "Bring their work together when they're done, and tell me what each one did.");
   return lines.join("\n");
+}
+
+/** Claude Code's tools for what the planner's boxes allow. */
+const TOOL_NAMES: Record<string, string[]> = {
+  "Read files": ["Read", "Glob", "Grep"],
+  "Edit files": ["Edit", "Write", "MultiEdit", "NotebookEdit"],
+  "Run commands": ["Bash"],
+  "Browse the web": ["WebFetch", "WebSearch"],
+};
+const toolNames = (tools: string[]) => [...new Set(tools.flatMap((t) => TOOL_NAMES[t] ?? []))];
+
+/** A manager to start as a session of its own (see team.rs). */
+export type Launch = { agent: string; name: string; model: string; prompt: string; tools: string[]; agents: Record<string, unknown> };
+
+/** How a plan starts on a chat, for `work`: what the lead's told, and each manager that runs as a session of its own,
+ *  with its workers as its subagents. A plan without managers is all the lead's, as `verbalize` says it. */
+export function launch(plan: Plan, work: string): { lead: string; managers: Launch[] } {
+  const lead = plan.agents.find((a) => a.role === "Lead");
+  const managers = plan.agents.filter((a) => a.role === "Manager" && teamFor(plan, a.id).length);
+  const said = work.trim() ? `The work: ${work.trim()}\n\n` : "";
+  if (!lead || !managers.length) return { lead: said + verbalize(plan), managers: [] };
+
+  const lines = [
+    `${said}Work through this with a team, the way I've planned it. You're the ${lead.name}${lead.brief.trim() ? `: ${clause(lead.brief)}` : ""}.`,
+    `Headroom is running ${list(managers.map((m) => m.name))} as sessions of their own, on this same work, each with its own team. Don't do their parts yourself. Their reports will come to this chat as they finish; once they're all in, bring them together and tell me what each one did.`,
+  ];
+  const own = teamFor(plan, null);
+  if (own.length) {
+    lines.push("", "Your own part, with these as your subagents, each with the model given and its name as the subagent's description:");
+    own.forEach((a) => lines.push(`- ${a.name} (${a.model}): ${describe(plan, a)}`.replace(": .", ".")));
+  }
+
+  const specs: Launch[] = managers.map((m) => {
+    const team = teamFor(plan, m.id);
+    const agents = Object.fromEntries(
+      team.map((a) => [
+        a.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || a.id,
+        {
+          description: a.name + (a.brief.trim() ? `: ${clause(a.brief)}` : ""),
+          prompt: `You're ${a.name}. ${describe(plan, a)}`,
+          model: a.model.toLowerCase(),
+          tools: toolNames(a.tools),
+        },
+      ]),
+    );
+    // A manager can do what any of its team can, since it's its session they run in, and it starts them
+    const tools = [
+      ...new Set([
+        ...toolNames(m.tools),
+        ...team.flatMap((a) => toolNames(a.tools)),
+        "Task",
+        "Agent",
+        "TodoWrite",
+        ...(m.commands.length ? ["Skill", "SlashCommand"] : []),
+      ]),
+    ];
+    const prompt = [
+      work.trim(),
+      `You're ${m.name}, one of the managers on a team the user planned in Headroom${m.brief.trim() ? `: ${clause(m.brief)}` : ""}. The other managers handle their parts, and the lead brings everything together; stick to yours.`,
+      `Run your team as your subagents. They're set up with their models and what they may do:`,
+      ...team.map((a) => `- ${a.name}: ${describe(plan, a)}`.replace(": .", ".")),
+      m.commands.length ? `You may use ${list(m.commands)}.` : "",
+      m.until ? `Keep going until ${clause(m.until)}.` : "",
+      "When your team's done, end with a short report of what it did and anything the lead should know. That report is what the lead gets.",
+    ].filter(Boolean);
+    return { agent: m.id, name: m.name, model: m.model.toLowerCase(), prompt: prompt.join("\n\n"), tools, agents };
+  });
+  return { lead: lines.join("\n"), managers: specs };
 }
 
 export function Canvas({
@@ -465,9 +547,12 @@ type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes
 function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
+  const [work, setWork] = useState("");
+  const [usage, setUsage] = useState("");
   const [problem, setProblem] = useState("");
   const [done, setDone] = useState("");
-  const text = verbalize(plan);
+  const [busy, setBusy] = useState(false);
+  const { lead: text, managers } = launch(plan, work);
   useEffect(() => {
     // Every chat Headroom knows about, the ones that can take it now first
     Promise.all([bridge.pendingSessions(), bridge.load()]).then(([pending, app]) => {
@@ -478,36 +563,47 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
         .filter((s) => !now.some((c) => c.id === s.id))
         .map((s) => ({ id: s.id, title: s.title ?? s.project, project: s.project, icon: s.icon, takes: null }));
       setChats([...now, ...rest]);
+      setUsage(app.limits.map((l) => `${Math.round(l.pct)}% of your ${l.label} limit`).join(", "));
     });
   }, []);
+  // The work starts as what the user last asked the chat, for them to keep, change, or write over
+  const pick = (id: string) => {
+    setChosen(id);
+    bridge.lastMessage(id).then((said) => said && setWork(said));
+  };
   const takes = (c: Chat) => c.takes !== null;
   const chat = chats.find((c) => c.id === chosen);
   const send = async () => {
-    if (!chat) return;
+    if (!chat || busy) return;
     setProblem("");
+    setBusy(true);
     try {
+      if (managers.length) await bridge.startTeam(chat.id, plan.name, managers);
+      const started = managers.length ? `Started ${list(managers.map((m) => m.name))}. ` : "";
       if (takes(chat)) {
         await bridge.sendToSession(chat.id, text);
-        setDone(`Sent to ${chat.title}.`);
+        setDone(`${started}Sent to ${chat.title}.`);
       } else {
         await navigator.clipboard.writeText(text);
         await bridge.openPending(chat.id);
-        setDone(`Copied. Paste it into ${chat.title}.`);
+        setDone(`${started}Copied the lead's part: paste it into ${chat.title}.`);
       }
     } catch (e) {
-      setProblem(`Couldn't send it: ${e instanceof Error ? e.message : String(e)}`);
+      setProblem(`Couldn't start it: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
   };
   return (
     <div className="sheet-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="sheet">
         <div className="inspector-title">Add {plan.name} to a chat</div>
-        <div className="inspector-hint">Describe the work in the chat first. This tells its Claude how to split it up.</div>
+        <div className="inspector-hint">The chat is the {plan.agents.find((a) => a.role === "Lead")?.name ?? "lead"}.</div>
         <div className="inspector-label">Chat</div>
         <div className="sheet-chats">
           {chats.length === 0 && <div className="inspector-hint">No chats are open. Start one in Claude or a terminal first.</div>}
           {chats.map((c) => (
-            <button key={c.id} className={chosen === c.id ? "sheet-chat on" : "sheet-chat"} onClick={() => setChosen(c.id)}>
+            <button key={c.id} className={chosen === c.id ? "sheet-chat on" : "sheet-chat"} onClick={() => pick(c.id)}>
               {c.icon && <Avatar icon={c.icon} size={22} />}
               <span>
                 <b>{c.title}</b> <span className="inspector-hint">{c.project}</span>
@@ -518,7 +614,23 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
             </button>
           ))}
         </div>
-        <div className="inspector-label">What it'll be told</div>
+        <div className="inspector-label">The work</div>
+        <textarea
+          className="inspector-field"
+          rows={3}
+          value={work}
+          placeholder={chosen ? "What the team's for" : "Pick a chat, and what you last asked it shows here to start from"}
+          onChange={(e) => setWork(e.target.value)}
+        />
+        {managers.length > 0 && (
+          <div className="sheet-managers">
+            Starts {managers.length} {managers.length === 1 ? "session" : "sessions"} in the background, in the chat's folder:{" "}
+            {managers.map((m) => `${m.name} (${m.model.replace(/^./, (c) => c.toUpperCase())})`).join(", ")}. Each may only do what its team's boxes
+            allow, and uses your Claude limits like any session{usage && ` (you're at ${usage})`}. They share the folder, so two editing the same
+            files can clash. They stop if Headroom quits.
+          </div>
+        )}
+        <div className="inspector-label">What the {plan.agents.find((a) => a.role === "Lead")?.name ?? "lead"} will be told</div>
         <pre className="sheet-text">{text}</pre>
         {problem && <div className="ask-problem">{problem}</div>}
         {done && <div className="pending-sent">{done}</div>}
@@ -528,8 +640,8 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
             {done ? "Done" : "Cancel"}
           </button>
           {!done && (
-            <button className="ask-btn primary" disabled={!chat} onClick={send}>
-              {chat && !takes(chat) ? "Copy and Open" : "Send"}
+            <button className="ask-btn primary" disabled={!chat || busy} onClick={send}>
+              {managers.length ? "Start" : chat && !takes(chat) ? "Copy and Open" : "Send"}
             </button>
           )}
         </div>
@@ -573,6 +685,14 @@ export function PlannerWindow() {
   // Something that would drop unsaved changes, waiting on whether to save them first
   const [unsaved, setUnsaved] = useState<{ then: () => void; doing: string } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  // Teams at work on chats, and ones that finished in the last while, to follow and stop
+  const [runs, setRuns] = useState<TeamRun[]>([]);
+  useEffect(() => {
+    const load = () => bridge.teams().then(setRuns);
+    load();
+    const timer = setInterval(load, 2000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     bridge.plans().then((all) => {
       setPlans(all);
@@ -750,6 +870,19 @@ export function PlannerWindow() {
           Add to a Chat…
         </button>
       </div>
+      {runs
+        .filter((r) => r.members.some((m) => m.state === "working"))
+        .map((r) => (
+          <div key={r.id} className="plan-running">
+            <span className="plan-dot working" />
+            <b>{r.name}</b>
+            <span>{r.members.map((m) => `${m.name} ${m.state === "working" ? "working" : m.state === "done" ? "done" : m.state}`).join(" · ")}</span>
+            <span className="ask-spacer" />
+            <button className="ask-btn ghost" onClick={() => bridge.stopTeam(r.id).then(() => bridge.teams().then(setRuns))}>
+              Stop
+            </button>
+          </div>
+        ))}
       {issues.length > 0 && <div className="plan-issues">{issues.join(" ")}</div>}
       <div className="plan-body">
         <Canvas

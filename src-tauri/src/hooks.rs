@@ -108,6 +108,9 @@ const STOP_ASKING_NOTE: &str = "Headroom: the user turned off asking what's next
 /// How a message the user sends a working session from the list reaches Claude.
 const INTERJECTED: &str = "The user sent this from Headroom while you were working:";
 
+/// How a report from one of a team's managers reaches the lead.
+const TEAM_REPORT: &str = "Headroom has a report from one of your team's managers, which runs as a session of its own:";
+
 /// Where we remember which sessions were asked to ask what's next, one file per session, so the ones that were can be
 /// told to stop, and when each was last sent back to ask.
 fn asking_dir() -> Option<PathBuf> {
@@ -171,7 +174,8 @@ pub fn run() {
     // A permission request or question we can hold for an answer gets an ID, so the app can show it and answer it. So
     // does a finished turn in hands-free, held open a while for a reply from the popover.
     let for_reply = name == "Stop" && nudge.is_none() && interjected.is_none() && holds_for_reply(&event);
-    let hold = hold_arg().filter(|_| (for_reply || holdable(&event)) && app_says_hold() && !watching());
+    let hold =
+        hold_arg().filter(|_| (for_reply || holdable(&event)) && team().is_none() && app_says_hold() && !watching());
     if let Some(hold) = hold {
         let id = format!(
             "{}-{}-{}",
@@ -208,7 +212,7 @@ pub fn run() {
     if interjected.is_some() {
         fresh_message(session);
     }
-    let interjection = interjected.map(|text| format!("{INTERJECTED}\n\n{text}"));
+    let interjection = interjected.map(|waiting| waiting.say(false));
 
     if let (Some(hold), Some(id), Some(at)) = (hold, kept["request_id"].as_str(), kept["at"].as_i64()) {
         hold_for_answer(id, at, hold, &event);
@@ -279,9 +283,16 @@ fn waited_on() -> bool {
     std::env::args().any(|a| a == WAIT_ARG)
 }
 
-/// Is someone there to answer? Scripts and apps built on the Agent SDK run Claude Code with nobody watching.
+/// The last thing the user said in a conversation, from its transcript, for the planner to offer as the work a team's
+/// added for (see Planner.tsx). Only ever read for the user, in the planner, and never kept.
+pub fn last_prompt(transcript: &Path) -> Option<String> {
+    conversation(&tail(transcript)?).0
+}
+
+/// Is someone there to answer? Scripts and apps built on the Agent SDK run Claude Code with nobody watching, and so
+/// does Headroom, for a team's managers, whatever Claude Code was told about where it was started from.
 fn attended() -> bool {
-    !std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok_and(|e| e.starts_with("sdk"))
+    !std::env::var("CLAUDE_CODE_ENTRYPOINT").is_ok_and(|e| e.starts_with("sdk")) && team().is_none()
 }
 
 /// The team and agent this session runs for, when Headroom started it as a manager for a team from the planner
@@ -841,13 +852,13 @@ fn hold_for_answer(id: &str, at: i64, hold: std::time::Duration, event: &Value) 
     // the finished turn now
     let session = event["session_id"].as_str().filter(|_| event["hook_event_name"] == "Stop");
     let interjected = || {
-        let text = take_interjections(session?)?;
+        let waiting = take_interjections(session?)?;
         log(&json!({
             "hook_event_name": "HeadroomInterjected",
             "session_id": session,
             "at": chrono::Utc::now().timestamp_millis(),
         }));
-        Some(format!("reply:{text}"))
+        Some(waiting.say(true))
     };
     let mut polls = 0u32;
     loop {
@@ -856,8 +867,15 @@ fn hold_for_answer(id: &str, at: i64, hold: std::time::Duration, event: &Value) 
                 let _ = fs::remove_file(&answer_path);
                 Some(text)
             }
-            Err(_) => interjected(),
+            Err(_) => None,
         };
+        // Taken as it is: it's already said as a reply
+        if let Some(said) = answer.is_none().then(interjected).flatten() {
+            let _ = fs::remove_file(&more_path);
+            println!("{}", json!({ "decision": "block", "reason": with_notes(&said) }));
+            fresh_message(event["session_id"].as_str().unwrap_or_default());
+            return;
+        }
         if let Some(text) = answer {
             let _ = fs::remove_file(&more_path);
             match reply(text.trim(), event) {
@@ -1057,6 +1075,16 @@ pub fn extend(id: &str, ms: u64) -> Result<(), String> {
 /// message is a file of its own, written under another name and renamed into place, so a hook taking the messages never
 /// reads half of one, and one sent while a hook is taking them waits for the next.
 pub fn interject(session: &str, text: &str) -> Result<(), String> {
+    queue(session, text, "txt")
+}
+
+/// Leave a report from one of a team's managers for the lead's chat (see team.rs), to go in the same way as a message
+/// from the user, but said as what it is.
+pub fn report(session: &str, text: &str) -> Result<(), String> {
+    queue(session, text, "report.txt")
+}
+
+fn queue(session: &str, text: &str, kind: &str) -> Result<(), String> {
     let dir = interject_dir(session).ok_or("Can't find Headroom's folder")?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for dir in [dir.parent(), Some(dir.as_path())].into_iter().flatten() {
@@ -1069,14 +1097,14 @@ pub fn interject(session: &str, text: &str) -> Result<(), String> {
     let temp = dir.join(format!(".{name}.tmp"));
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&temp);
     file.as_mut().map_err(|e| e.to_string())?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    fs::rename(&temp, dir.join(format!("{name}.txt"))).map_err(|e| e.to_string())
+    fs::rename(&temp, dir.join(format!("{name}.{kind}"))).map_err(|e| e.to_string())
 }
 
 /// Messages the user sent this session from the list while it worked, for Claude to see now: after a tool call, at the
 /// end of the turn, or failing both, with the user's next message. Only when Claude Code waits for this hook, since
 /// otherwise nothing it prints reaches Claude, and not after a subagent's tool call, which may reach only the
 /// subagent.
-fn interjections(name: &str, event: &Value) -> Option<String> {
+fn interjections(name: &str, event: &Value) -> Option<Waiting> {
     let session = event["session_id"].as_str().filter(|s| !s.is_empty())?;
     let subagent = event["agent_id"].as_str().is_some_and(|id| !id.is_empty());
     let delivers = matches!(name, "PostToolUse" | "PostToolUseFailure" | "Stop" | "UserPromptSubmit");
@@ -1093,7 +1121,7 @@ pub fn queued(session: &str) -> bool {
 
 /// Take the messages waiting for a session, oldest first, as one. Each is renamed before it's read, so two hooks
 /// running at once can't both hand the same one to Claude.
-fn take_interjections(session: &str) -> Option<String> {
+fn take_interjections(session: &str) -> Option<Waiting> {
     let dir = interject_dir(session)?;
     let mut names: Vec<String> = fs::read_dir(&dir)
         .ok()?
@@ -1102,19 +1130,44 @@ fn take_interjections(session: &str) -> Option<String> {
         .filter(|name| name.ends_with(".txt") && !name.starts_with('.'))
         .collect();
     names.sort();
-    let mut texts = vec![];
+    let mut waiting = Waiting::default();
     for name in names {
         let taken = dir.join(format!(".{name}.{}", std::process::id()));
         if fs::rename(dir.join(&name), &taken).is_err() {
             continue;
         }
-        let text = fs::read_to_string(&taken).unwrap_or_default();
-        if !text.trim().is_empty() {
-            texts.push(text.trim().to_string());
+        let text = fs::read_to_string(&taken).unwrap_or_default().trim().to_string();
+        match (text.is_empty(), name.ends_with(".report.txt")) {
+            (true, _) => {}
+            (false, true) => waiting.reports.push(text),
+            (false, false) => waiting.messages.push(text),
         }
         let _ = fs::remove_file(&taken);
     }
-    (!texts.is_empty()).then(|| texts.join("\n\n"))
+    (!waiting.messages.is_empty() || !waiting.reports.is_empty()).then_some(waiting)
+}
+
+/// What was waiting for a session: messages from the user, and reports from a team's managers.
+#[derive(Default)]
+struct Waiting {
+    messages: Vec<String>,
+    reports: Vec<String>,
+}
+
+impl Waiting {
+    /// All of it, for Claude: the user's messages as sent while it worked, or as the reply to its finished turn, and
+    /// each report as coming from the team.
+    fn say(&self, as_reply: bool) -> String {
+        let mut parts = vec![];
+        if !self.messages.is_empty() {
+            let from = if as_reply { "The user replied from Headroom:" } else { INTERJECTED };
+            parts.push(format!("{from}\n\n{}", self.messages.join("\n\n")));
+        }
+        for report in &self.reports {
+            parts.push(format!("{TEAM_REPORT}\n\n{report}"));
+        }
+        parts.join("\n\n")
+    }
 }
 
 /// Has this session not had this note yet? Marks it as had, so it's only true once. Creating the file is the check,
@@ -1253,7 +1306,7 @@ fn forget_old_notes() {
 /// never leaves Claude Code.
 fn keep(event: &Value) -> Value {
     let mut out = Map::new();
-    for key in ["session_id", "hook_event_name", "cwd", "source", "tool_name", "error"] {
+    for key in ["session_id", "hook_event_name", "cwd", "source", "tool_name", "error", "transcript_path"] {
         if let Some(v) = event.get(key).filter(|v| v.is_string()) {
             out.insert(key.into(), v.clone());
         }
@@ -1839,6 +1892,7 @@ mod tests {
         let kept = keep(&event);
         assert_eq!(kept["session_id"], "abc");
         assert!(kept.get("prompt").is_none());
-        assert!(kept.get("transcript_path").is_none());
+        // Where the transcript is, for the planner to read the last message from when asked, but nothing that's in it
+        assert_eq!(kept["transcript_path"], "/Users/me/.claude/projects/x.jsonl");
     }
 }

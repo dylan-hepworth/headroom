@@ -81,6 +81,8 @@ pub struct Session {
     unattended: bool,
     /// The process that last ran one of its hooks: its Claude Code, or a shell in between.
     hook_parent: Option<i32>,
+    /// Where Claude Code keeps its transcript
+    transcript: Option<String>,
 }
 
 /// A permission request or question that a hook is holding for the user to answer in Headroom. These are kept apart
@@ -226,6 +228,7 @@ impl Sessions {
             seen: false,
             unattended: false,
             hook_parent: None,
+            transcript: None,
         });
         if let Some(cwd) = event["cwd"].as_str() {
             session.cwd = cwd.to_string();
@@ -247,6 +250,9 @@ impl Sessions {
         }
         session.heard = at;
         session.unattended |= event["unattended"] == true;
+        if let Some(path) = event["transcript_path"].as_str() {
+            session.transcript = Some(path.to_string());
+        }
         if let Some(pid) = event["ppid"].as_i64().and_then(|p| i32::try_from(p).ok()) {
             session.hook_parent = Some(pid);
         }
@@ -518,6 +524,18 @@ impl Sessions {
             .collect();
         list.sort_by_key(|(since, _)| *since);
         list.into_iter().map(|(_, ask)| ask).collect()
+    }
+
+    /// A session's folder and transcript.
+    pub fn place(&self, id: &str) -> Option<(String, Option<String>)> {
+        let s = self.sessions.get(id)?;
+        Some((s.cwd.clone(), s.transcript.clone()))
+    }
+
+    /// Forget a session that ended without saying so, like a team's manager that was stopped.
+    pub fn forget(&mut self, id: &str) {
+        self.sessions.remove(id);
+        self.release(|h| h.session == id);
     }
 
     /// What a session's icon is kept under (see icons.rs): its chat in the Claude app, or itself, and its folder.

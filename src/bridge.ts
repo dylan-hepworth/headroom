@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Pending } from "./Pending";
 import type { ChatIcon } from "./Avatar";
-import type { Plan } from "./Planner";
+import type { Launch, Plan } from "./Planner";
 import type { Ask } from "./Popover";
 import myCompany from "./my-company.json";
 
@@ -67,6 +67,15 @@ export type Session = {
   request?: { tool: string; detail: string };
   /** The start of Claude's last message, once it's done and waiting on you. */
   last?: string;
+};
+
+/** A team from the planner, started on a chat (see team.rs): its managers, each a session of its own. */
+export type TeamRun = {
+  id: string;
+  name: string;
+  lead: string;
+  started: number;
+  members: { agent: string; name: string; model: string; session: string; state: "working" | "done" | "failed" | "stopped"; text: string }[];
 };
 
 export type Settings = {
@@ -177,6 +186,10 @@ export const bridge = inApp
       savePlan: (plan: Plan) => invoke("save_plan", { plan }),
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       openPlanner: () => invoke("open_planner_now"),
+      lastMessage: (session: string) => invoke<string | null>("last_message", { session }),
+      startTeam: (lead: string, name: string, managers: Launch[]) => invoke<string>("start_team", { lead, name, managers }),
+      stopTeam: (run: string) => invoke("stop_team", { run }),
+      teams: () => invoke<TeamRun[]>("teams"),
       headroomInFront: () => invoke<boolean>("headroom_in_front"),
       popoverCards: () => invoke("popover_cards"),
       /** The user's writing a reply in the list, which stays down meanwhile. */
@@ -226,6 +239,11 @@ function mockBridge() {
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
     openPlanner: async () => {},
+    lastMessage: async (_session: string): Promise<string | null> =>
+      "Launch the sign-in redesign: new login page, magic links, and the help docs for it.",
+    startTeam: async (_lead: string, _name: string, _managers: Launch[]) => "team-1",
+    stopTeam: async (_run: string) => {},
+    teams: async (): Promise<TeamRun[]> => [],
     headroomInFront: async () => false,
     emojiNames: async (): Promise<[string, string][]> => [
       ["🦊", "fox"],

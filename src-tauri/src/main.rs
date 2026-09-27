@@ -29,6 +29,7 @@ mod icons;
 mod notifications;
 mod plans;
 mod sessions;
+mod team;
 mod transcripts;
 mod wallpaper;
 
@@ -397,6 +398,8 @@ struct State {
     told_front: Mutex<Option<String>>,
     /// Each chat's icon (see icons.rs).
     icons: Mutex<icons::Icons>,
+    /// Teams from the planner, running (see team.rs).
+    teams: Mutex<team::Teams>,
 
     /// The daily recap: whether it's on, and when it goes out (from `RECAP_TIMES`). Also today's use so far.
     recap: Mutex<(bool, &'static str)>,
@@ -1614,8 +1617,8 @@ fn open_settings_at(app: &AppHandle, pane: &str, setting: Option<&str>) {
 /// How many of Headroom's windows are open that put it in the Dock and the app switcher.
 static DOCK_WINDOWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Headroom lives in the menu bar, but while one of its windows is open, it's in the Dock and the app switcher too, with
-/// the usual menus, like any app. It goes back to the menu bar alone once the last of them is closed.
+/// Headroom lives in the menu bar, but while one of its windows is open, it's in the Dock and the app switcher too,
+/// with the usual menus, like any app. It goes back to the menu bar alone once the last of them is closed.
 fn in_dock_while_open(app: &AppHandle, w: &tauri::WebviewWindow) {
     use std::sync::atomic::Ordering::SeqCst;
     DOCK_WINDOWS.fetch_add(1, SeqCst);
@@ -1667,6 +1670,123 @@ fn open_planner(app: &AppHandle) {
 #[tauri::command]
 fn open_planner_now(app: AppHandle) {
     open_planner(&app);
+}
+
+/// The last thing the user said in a chat, for the planner to offer as the work a team's added for.
+#[tauri::command]
+fn last_message(session: String, state: tauri::State<Arc<State>>) -> Option<String> {
+    let (_, transcript) = state.sessions.lock().unwrap().place(&session)?;
+    hooks::last_prompt(Path::new(&transcript?))
+}
+
+/// Start a team's managers, each as a Claude Code session of its own, in the lead's folder (see team.rs). What each is
+/// told, and may use, comes from the planner. Returns the run's ID.
+#[tauri::command]
+fn start_team(
+    lead: String,
+    name: String,
+    managers: Vec<Value>,
+    state: tauri::State<Arc<State>>,
+) -> Result<String, String> {
+    let managers: Vec<team::Manager> = managers.iter().map(team::Manager::from).collect::<Result<_, _>>()?;
+    managers.iter().try_for_each(team::valid)?;
+    let (cwd, _) = state.sessions.lock().unwrap().place(&lead).ok_or("Headroom doesn't know that chat any more")?;
+    let run = format!("team-{}", Local::now().timestamp_millis());
+    let mut members = vec![];
+    for m in &managers {
+        let (app, run_id, agent) = (state.app.clone(), run.clone(), m.agent.clone());
+        let done = move |result| team_member_done(&app, &run_id, &agent, result);
+        let started = team::start(&run, m, Path::new(&cwd), done);
+        match started {
+            Ok((pid, session)) => members.push(team::Member {
+                agent: m.agent.clone(),
+                name: m.name.clone(),
+                model: m.model.clone(),
+                session,
+                pid: Some(pid),
+                state: team::State::Working,
+            }),
+            Err(e) => {
+                // All or none: the ones that did start are stopped
+                members.iter().filter_map(|m| m.pid).for_each(team::stop);
+                return Err(e);
+            }
+        }
+    }
+    let started = Local::now().timestamp_millis();
+    state.teams.lock().unwrap().runs.push(team::Run { id: run.clone(), name, lead, started, members });
+    changed(&state);
+    Ok(run)
+}
+
+/// A manager's done: its report goes to the lead's chat, like a message from the list, and the user hears about it.
+/// Once they all are, the user hears that too.
+fn team_member_done(app: &AppHandle, run: &str, agent: &str, result: Result<String, String>) {
+    let state = app.state::<Arc<State>>();
+    let (lead, name, member, all_in) = {
+        let mut teams = state.teams.lock().unwrap();
+        let Some(r) = teams.runs.iter_mut().find(|r| r.id == run) else { return };
+        let Some(m) = r.members.iter_mut().find(|m| m.agent == agent) else { return };
+        // Stopped by the user: there's nothing to report
+        if m.state == team::State::Stopped {
+            return;
+        }
+        m.state = match &result {
+            Ok(report) => team::State::Done(report.clone()),
+            Err(why) => team::State::Failed(why.clone()),
+        };
+        m.pid = None;
+        let member = m.name.clone();
+        let all_in = r.members.iter().all(|m| m.state != team::State::Working);
+        (r.lead.clone(), r.name.clone(), member, all_in)
+    };
+    let (title, text) = match &result {
+        Ok(report) => (format!("{member} is done"), format!("{member} reports:\n\n{report}")),
+        Err(why) => (format!("{member} stopped"), format!("{member} stopped before it was done: {why}")),
+    };
+    let _ = hooks::report(&lead, &text);
+    let first = text.lines().nth(2).unwrap_or(&text).to_string();
+    notify_about(&state, &lead, &title, &first, Some(OnClick::Session { id: lead.clone(), app: None }));
+    if all_in {
+        let body = "Every manager has reported. Their reports go to the lead's chat with your next message, or now if \
+            it's at work.";
+        let on_click = Some(OnClick::Session { id: lead.clone(), app: None });
+        notify_about(&state, &lead, &format!("{name} is done"), body, on_click);
+    }
+    changed(&state);
+}
+
+/// Stop a team's managers that are still at work.
+#[tauri::command]
+fn stop_team(run: String, state: tauri::State<Arc<State>>) {
+    stop_teams(&state, Some(&run));
+}
+
+fn stop_teams(state: &State, run: Option<&str>) {
+    let mut ended = vec![];
+    {
+        let mut teams = state.teams.lock().unwrap();
+        for r in teams.runs.iter_mut().filter(|r| run.is_none_or(|id| r.id == id)) {
+            for m in r.members.iter_mut().filter(|m| m.state == team::State::Working) {
+                if let Some(pid) = m.pid.take() {
+                    team::stop(pid);
+                }
+                m.state = team::State::Stopped;
+                ended.push(m.session.clone());
+            }
+        }
+    }
+    // A stopped session never says it's ended
+    let mut sessions = state.sessions.lock().unwrap();
+    ended.iter().for_each(|id| sessions.forget(id));
+    drop(sessions);
+    changed(state);
+}
+
+/// The teams that have run since Headroom started, for the planner.
+#[tauri::command]
+fn teams(state: tauri::State<Arc<State>>) -> Value {
+    state.teams.lock().unwrap().to_json()
 }
 
 /// The saved agent plans (see plans.rs).
@@ -3264,6 +3384,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         list_mode: Mutex::new(false),
         told_front: Mutex::new(None),
         icons: Mutex::new(icons),
+        teams: Mutex::new(team::Teams::default()),
         today: Mutex::new(Today::default()),
         resets: Mutex::new([None, None]),
         update_item,
@@ -3351,6 +3472,10 @@ fn main() {
             save_plan,
             delete_plan,
             open_planner_now,
+            last_message,
+            start_team,
+            stop_team,
+            teams,
             headroom_in_front,
             emoji_names,
             mark_seen,
@@ -3374,10 +3499,11 @@ fn main() {
 
     // Closing the last window would normally quit the app. Only an exit that comes with a code (from "Quit") is
     // allowed through.
-    app.run(|_, event| {
-        if let RunEvent::ExitRequested { api, code: None, .. } = event {
-            api.prevent_exit();
-        }
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+        // A team's managers don't go on without Headroom there to follow them
+        RunEvent::Exit => stop_teams(&app.state::<Arc<State>>(), None),
+        _ => {}
     });
 }
 
