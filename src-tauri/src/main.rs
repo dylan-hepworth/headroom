@@ -2546,8 +2546,11 @@ fn held_requests(state: &State) -> Vec<Value> {
 
 /// A session's icon (see icons.rs), or none for one Headroom doesn't know.
 fn icon_of(state: &State, session: &str) -> Option<Value> {
-    let (chat, cwd) = state.sessions.lock().unwrap().icon_key(session)?;
-    Some(state.icons.lock().unwrap().of(&chat, &cwd))
+    let (key, others) = {
+        let sessions = state.sessions.lock().unwrap();
+        (sessions.icon_key(session)?, sessions.icon_keys())
+    };
+    Some(state.icons.lock().unwrap().of(&key.0, &key.1, &others))
 }
 
 /// The same rows, each with its session's icon, the session's ID being under `key`.
@@ -2558,6 +2561,13 @@ fn with_icons(state: &State, mut rows: Vec<Value>, key: &str) -> Vec<Value> {
         }
     }
     rows
+}
+
+/// Every emoji macOS has a name for, for the icon picker's search (see icons.rs). Read once, the first time.
+#[tauri::command]
+async fn emoji_names() -> Vec<(String, String)> {
+    static NAMES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(icons::emoji_names).clone()
 }
 
 /// Give a session's chat an icon, or every chat in its folder with `whole_project`. `None` puts back the one it had to
@@ -3264,6 +3274,7 @@ fn main() {
             send_to_session,
             stop_step,
             set_icon,
+            emoji_names,
             mark_seen,
             open_pending,
             popover_cards,

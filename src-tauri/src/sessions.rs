@@ -526,6 +526,11 @@ impl Sessions {
         Some((s.host_chat.clone().unwrap_or_else(|| id.to_string()), s.cwd.clone()))
     }
 
+    /// The icon keys of all the sessions, each with its folder.
+    pub fn icon_keys(&self) -> Vec<(String, String)> {
+        self.sessions.keys().filter_map(|id| self.icon_key(id)).collect()
+    }
+
     /// The icon keys of the sessions in a folder.
     pub fn chats_in(&self, cwd: &str) -> Vec<String> {
         self.sessions.keys().filter_map(|id| self.icon_key(id).filter(|(_, c)| c == cwd).map(|(key, _)| key)).collect()
