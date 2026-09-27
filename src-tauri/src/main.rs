@@ -1646,6 +1646,8 @@ fn open_planner(app: &AppHandle) {
         .min_inner_size(900.0, 560.0)
         .title_bar_style(TitleBarStyle::Overlay)
         .hidden_title(true)
+        // Centered down the planner's toolbar, which is taller than a title bar (see plan.css)
+        .traffic_light_position(tauri::LogicalPosition::new(18.0, 27.0))
         .center()
         .build()
     else {

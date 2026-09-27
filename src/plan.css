@@ -390,7 +390,10 @@
   box-shadow: none;
 }
 .plan-window.planner .plan-toolbar {
-  padding-left: 84px;
+  /* A set height, so the window's buttons, placed to match it (open_planner in main.rs), stay centered in it */
+  box-sizing: border-box;
+  height: 50px;
+  padding-left: 92px;
 }
 .plan-window.planner .plan-body {
   flex: 1;
@@ -471,7 +474,7 @@ html.browser body:has(.planner) {
   font-size: 12px;
 }
 .plan-issues {
-  padding: 6px 18px 6px 84px;
+  padding: 6px 18px 6px 92px;
   font-size: 12px;
   color: #b07a12;
   background: rgba(245, 180, 60, 0.14);
