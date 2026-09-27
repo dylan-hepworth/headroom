@@ -118,7 +118,7 @@ fn start_slot(chat: &str) -> usize {
     (hash % EMOJI.len() as u64) as usize
 }
 
-/// Every emoji macOS has a name for, with the name, the way its Emoji & Symbols viewer puts it ("fox"), for the picker
+/// Every emoji macOS has a name for, with the name, the way its Emoji & Symbols viewer puts it ("fox face"), for the picker
 /// to search. They're macOS's own, read from where it keeps them, so a Mac that keeps them somewhere else just has the
 /// picker's usual few.
 pub fn emoji_names() -> Vec<(String, String)> {

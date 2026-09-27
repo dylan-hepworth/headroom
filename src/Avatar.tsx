@@ -177,6 +177,9 @@ export function choosePicture(): Promise<ChatIcon | null> {
       img.src = url;
     };
     input.addEventListener("cancel", () => resolve(null));
+    // Not every WebKit says when the file panel's cancelled, but the window gets its focus back either way. A file
+    // that was picked comes through a moment before that, and a second resolve does nothing.
+    window.addEventListener("focus", () => setTimeout(() => resolve(null), 500), { once: true });
     input.click();
   });
 }
