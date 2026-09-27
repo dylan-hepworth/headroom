@@ -12,7 +12,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
 import { bridge } from "./bridge";
-import type { Pending } from "./Pending";
 import "./plan.css";
 import "./popover.css";
 
@@ -35,7 +34,8 @@ export type Agent = {
 };
 /** Work handed from one agent to another. A loop sends it back until the second one's happy, up to `rounds` times. */
 export type Edge = { from: string; to: string; loop?: { until: string; rounds: number } };
-export type Plan = { id: string; name: string; agents: Agent[]; edges: Edge[] };
+/** A team, saved to start on any chat. `updated` is when it was last saved, in milliseconds since 1970. */
+export type Plan = { id: string; name: string; agents: Agent[]; edges: Edge[]; updated?: number };
 
 const GRID = 20;
 export const W = 160;
@@ -456,18 +456,31 @@ function Inspector({
   );
 }
 
+/** A chat the plan can go to, and how it gets there: after the step it's on, as the reply to its finished turn, or
+ *  copied, to paste in there. */
+type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes: "working" | "reply" | null };
+
 /** Where the plan goes: a chat that can take it now (at work, or finished with its turn held open for a reply), after
  *  a look at exactly what it'll be told. Any other chat gets it copied, to paste in there. */
 function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
-  const [chats, setChats] = useState<Pending[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [chosen, setChosen] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
   const [done, setDone] = useState("");
   const text = verbalize(plan);
   useEffect(() => {
-    bridge.pendingSessions().then(setChats);
+    // Every chat Headroom knows about, the ones that can take it now first
+    Promise.all([bridge.pendingSessions(), bridge.load()]).then(([pending, app]) => {
+      const now: Chat[] = pending
+        .filter((p) => p.state === "working" || p.replyId)
+        .map((p) => ({ id: p.id, title: p.title, project: p.project, icon: p.icon, takes: p.state === "working" ? "working" : "reply" }));
+      const rest: Chat[] = app.sessions
+        .filter((s) => !now.some((c) => c.id === s.id))
+        .map((s) => ({ id: s.id, title: s.title ?? s.project, project: s.project, icon: s.icon, takes: null }));
+      setChats([...now, ...rest]);
+    });
   }, []);
-  const takes = (c: Pending) => c.state === "working" || !!c.replyId;
+  const takes = (c: Chat) => c.takes !== null;
   const chat = chats.find((c) => c.id === chosen);
   const send = async () => {
     if (!chat) return;
@@ -488,7 +501,7 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
   return (
     <div className="sheet-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="sheet">
-        <div className="inspector-title">Start {plan.name} on a chat</div>
+        <div className="inspector-title">Add {plan.name} to a chat</div>
         <div className="inspector-hint">Describe the work in the chat first. This tells its Claude how to split it up.</div>
         <div className="inspector-label">Chat</div>
         <div className="sheet-chats">
@@ -499,7 +512,9 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
               <span>
                 <b>{c.title}</b> <span className="inspector-hint">{c.project}</span>
               </span>
-              <span className="sheet-how">{takes(c) ? (c.state === "working" ? "After its current step" : "As your reply") : "Copy and paste"}</span>
+              <span className="sheet-how">
+                {c.takes === "working" ? "After its current step" : c.takes === "reply" ? "As your reply" : "Copy and paste"}
+              </span>
             </button>
           ))}
         </div>
@@ -526,14 +541,38 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
 let made = 0;
 const newId = () => `a${Date.now().toString(36)}${made++}`;
 
-/** The planner window. */
+/** "just now", "5m ago", "3h ago", "2d ago" */
+function ago(ms?: number) {
+  if (!ms) return "";
+  const mins = Math.floor((Date.now() - ms) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / 1440)}d ago`;
+}
+
+/** A name for another version of a team: "My company" gives "My company v2", and "My company v2" gives v3, and so on,
+ *  past any that are taken. */
+function nextVersion(name: string, taken: string[]) {
+  const base = name.replace(/ v\d+$/, "");
+  let n = Number(/ v(\d+)$/.exec(name)?.[1] ?? 1) + 1;
+  while (taken.includes(`${base} v${n}`)) n++;
+  return `${base} v${n}`;
+}
+
+/** The planner window: one team open at a time, saved as it is or as a new version, and any saved one opened. */
 export function PlannerWindow() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [saved, setSaved] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
-  const [menu, setMenu] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Saving as a new version, with its name
+  const [savingAs, setSavingAs] = useState<string | null>(null);
+  // Something that would drop unsaved changes, waiting on whether to save them first
+  const [unsaved, setUnsaved] = useState<{ then: () => void; doing: string } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   useEffect(() => {
     bridge.plans().then((all) => {
       setPlans(all);
@@ -545,19 +584,55 @@ export function PlannerWindow() {
     setPlan(next);
     setSaved(false);
   };
-  const save = async () => {
-    if (!plan) return;
-    await bridge.savePlan(plan);
-    setPlans((all) => (all.some((p) => p.id === plan.id) ? all.map((p) => (p.id === plan.id ? plan : p)) : [...all, plan]));
+  const store = async (p: Plan) => {
+    const stamped = { ...p, updated: Date.now() };
+    await bridge.savePlan(stamped);
+    setPlans((all) => (all.some((x) => x.id === p.id) ? all.map((x) => (x.id === p.id ? stamped : x)) : [...all, stamped]));
+    setPlan(stamped);
     setSaved(true);
   };
+  const save = () => plan && store(plan);
+  const saveAs = (name: string) => {
+    if (!plan) return;
+    store({ ...plan, id: newId(), name: name.trim() || plan.name });
+    setSavingAs(null);
+  };
+  /** Go ahead with something that would replace what's open, once any unsaved changes are saved or let go. */
+  const leave = (doing: string, then: () => void) => {
+    setOpening(false);
+    if (saved) return then();
+    setUnsaved({ then, doing });
+  };
+  const open = (p: Plan) =>
+    leave(`opening ${p.name}`, () => {
+      setPlan(p);
+      setSaved(true);
+      setSelected(null);
+    });
+  const fresh = () =>
+    leave("starting a new team", () => {
+      setPlan(blank());
+      setSaved(false);
+      setSelected(null);
+    });
 
-  // ⌫ takes away what's picked, unless it's being typed in; ⌘S saves
+  // ⌫ takes away what's picked, unless it's being typed in; ⌘S saves, ⇧⌘S saves as a new version, ⌘N starts a new
+  // team, and ⌘O opens one
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
-    if ((e.metaKey && e.key === "s") || (e.metaKey && e.key === "S")) {
+    const key = e.key.toLowerCase();
+    if (e.metaKey && ["s", "n", "o"].includes(key)) {
       e.preventDefault();
-      save();
+      if (key === "s" && e.shiftKey && plan)
+        setSavingAs(
+          nextVersion(
+            plan.name,
+            plans.map((p) => p.name),
+          ),
+        );
+      else if (key === "s") save();
+      else if (key === "n") fresh();
+      else setOpening(!opening);
       return;
     }
     if (e.key !== "Backspace" && e.key !== "Delete") return;
@@ -591,18 +666,7 @@ export function PlannerWindow() {
   };
   const addAgent = () => {
     const y = Math.max(0, ...plan.agents.map((a) => a.y)) + (plan.agents.length ? 120 : 20);
-    const a: Agent = {
-      id: newId(),
-      name: plan.agents.length ? "New agent" : "Lead",
-      icon: { emoji: plan.agents.length ? "🐝" : "🧭" },
-      model: plan.agents.length ? "Sonnet" : "Opus",
-      role: plan.agents.length ? "Worker" : "Lead",
-      x: 40,
-      y,
-      brief: "",
-      commands: [],
-      tools: ["Read files", "Edit files"],
-    };
+    const a = agent(plan.agents.length ? "worker" : "lead", 40, y);
     change({ ...plan, agents: [...plan.agents, a] });
     setSelected(a.id);
   };
@@ -610,78 +674,80 @@ export function PlannerWindow() {
   return (
     <div className="plan-window planner pop-vars">
       <div className="plan-toolbar" data-tauri-drag-region>
+        <input className="template-name" value={plan.name} onChange={(e) => change({ ...plan, name: e.target.value })} title="Rename it" />
+        <span className="plan-sub">
+          {[saved ? plan.updated && `Saved ${ago(plan.updated)}` : "Edited", `${plan.agents.length} agents`, counts].filter(Boolean).join(" · ")}
+        </span>
+        <span className="ask-spacer" />
+        <button className="ask-btn ghost" onClick={fresh} title="⌘N">
+          New
+        </button>
         <div className="template">
-          <button className="template-menu" onClick={() => setMenu(!menu)}>
-            {plan.name} <span>▾</span>
+          <button className="ask-btn ghost" onClick={() => setOpening(!opening)} title="⌘O">
+            Open <span className="menu-caret">▾</span>
           </button>
-          {menu && (
-            <div className="template-list" onPointerLeave={() => setMenu(false)}>
-              {plans.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    setPlan(p);
-                    setSaved(true);
-                    setSelected(null);
-                    setMenu(false);
-                  }}
-                >
-                  {p.name}
-                </button>
-              ))}
-              <hr />
-              <button
-                onClick={() => {
-                  change(blank());
-                  setSelected(null);
-                  setMenu(false);
-                }}
-              >
-                New Template
-              </button>
-              <button
-                onClick={() => {
-                  change({ ...plan, id: newId(), name: `${plan.name} copy` });
-                  setMenu(false);
-                }}
-              >
-                Duplicate
-              </button>
-              {plans.some((p) => p.id === plan.id) && (
-                <button
-                  className="danger"
-                  onClick={async () => {
-                    await bridge.deletePlan(plan.id);
-                    const rest = plans.filter((p) => p.id !== plan.id);
-                    setPlans(rest);
-                    setPlan(rest[0] ?? blank());
-                    setSaved(true);
-                    setMenu(false);
-                  }}
-                >
-                  Delete {plan.name}
-                </button>
-              )}
+          {opening && (
+            <div className="template-list" onPointerLeave={() => (setOpening(false), setDeleting(null))}>
+              {plans.length === 0 && <div className="template-none">No saved teams yet</div>}
+              {[...plans]
+                .sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+                .map((p) => (
+                  <div key={p.id} className={p.id === plan.id ? "template-row on" : "template-row"}>
+                    <button className="template-open" onClick={() => open(p)}>
+                      <span>{p.name}</span>
+                      <span className="template-when">
+                        {p.agents.length} agents{p.updated ? ` · ${ago(p.updated)}` : ""}
+                      </span>
+                    </button>
+                    {deleting === p.id ? (
+                      <button
+                        className="template-delete sure"
+                        onClick={async () => {
+                          await bridge.deletePlan(p.id);
+                          setPlans((all) => all.filter((x) => x.id !== p.id));
+                          setDeleting(null);
+                          if (p.id === plan.id) setSaved(false);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <button className="template-delete" title={`Delete ${p.name}`} onClick={() => setDeleting(p.id)}>
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
             </div>
           )}
         </div>
-        <input className="template-name" value={plan.name} onChange={(e) => change({ ...plan, name: e.target.value })} title="Rename it" />
-        <span className="plan-sub">
-          {plan.agents.length} agents{counts && ` · ${counts}`}
-        </span>
-        <span className="ask-spacer" />
+        <button className="ask-btn ghost" disabled={saved} onClick={save} title="⌘S">
+          Save
+        </button>
+        <button
+          className="ask-btn ghost"
+          onClick={() =>
+            setSavingAs(
+              nextVersion(
+                plan.name,
+                plans.map((p) => p.name),
+              ),
+            )
+          }
+          title="⇧⌘S"
+        >
+          Save As…
+        </button>
+        <span className="toolbar-gap" />
         <button className="ask-btn ghost" onClick={addAgent}>
           + Agent
-        </button>
-        <button className="ask-btn ghost" disabled={saved} onClick={save}>
-          {saved ? "Saved" : "Save"}
         </button>
         <button
           className="ask-btn primary"
           disabled={issues.length > 0 && !plan.agents.some((a) => a.role === "Lead")}
           onClick={() => setStarting(true)}
         >
-          Start on a Chat…
+          Add to a Chat…
         </button>
       </div>
       {issues.length > 0 && <div className="plan-issues">{issues.join(" ")}</div>}
@@ -706,8 +772,83 @@ export function PlannerWindow() {
         />
       </div>
       {starting && <StartSheet plan={plan} onClose={() => setStarting(false)} />}
+      {savingAs !== null && (
+        <div className="sheet-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setSavingAs(null)}>
+          <div className="sheet small">
+            <div className="inspector-title">Save as a new version</div>
+            <div className="inspector-hint">{plan.name} stays as it was last saved.</div>
+            <input
+              className="inspector-field sheet-name"
+              autoFocus
+              value={savingAs}
+              onChange={(e) => setSavingAs(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveAs(savingAs)}
+            />
+            <div className="plan-foot">
+              <span className="ask-spacer" />
+              <button className="ask-btn ghost" onClick={() => setSavingAs(null)}>
+                Cancel
+              </button>
+              <button className="ask-btn primary" onClick={() => saveAs(savingAs)}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {unsaved && (
+        <div className="sheet-backdrop">
+          <div className="sheet small">
+            <div className="inspector-title">Save the changes to {plan.name}?</div>
+            <div className="inspector-hint">They'll be lost, {unsaved.doing}, if they aren't saved.</div>
+            <div className="plan-foot">
+              <button
+                className="ask-btn ghost"
+                onClick={() => {
+                  unsaved.then();
+                  setUnsaved(null);
+                }}
+              >
+                Don't Save
+              </button>
+              <span className="ask-spacer" />
+              <button className="ask-btn ghost" onClick={() => setUnsaved(null)}>
+                Cancel
+              </button>
+              <button
+                className="ask-btn primary"
+                onClick={async () => {
+                  await save();
+                  unsaved.then();
+                  setUnsaved(null);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-const blank = (): Plan => ({ id: newId(), name: "New template", agents: [], edges: [] });
+/** A new agent: a team's first is its lead. */
+function agent(kind: "lead" | "worker", x: number, y: number): Agent {
+  const lead = kind === "lead";
+  return {
+    id: newId(),
+    name: lead ? "Lead" : "New agent",
+    icon: { emoji: lead ? "🧭" : "🐝" },
+    model: lead ? "Opus" : "Sonnet",
+    role: lead ? "Lead" : "Worker",
+    x,
+    y,
+    brief: "",
+    commands: [],
+    tools: ["Read files", "Edit files"],
+  };
+}
+
+/** A new team, with just its lead to start from. */
+const blank = (): Plan => ({ id: newId(), name: "New team", agents: [agent("lead", 460, 40)], edges: [] });
