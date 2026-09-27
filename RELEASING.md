@@ -1,43 +1,56 @@
 # Releasing
 
-Releases are built by GitHub Actions ([release.yml](.github/workflows/release.yml)) whenever a `v*` tag is pushed. The workflow builds a universal `.dmg`, publishes the release, and uploads the `latest.json` that the app checks for updates.
+Releases are built, signed, and notarized on a Mac, then published to GitHub with `gh`. Every installed copy checks the release's `latest.json` once a day and offers the update.
 
-## One-time setup
+## What you need
 
-### Update signing key (required)
-
-Every update has to be signed, and the app only installs updates signed with the key that matches the public key in [`tauri.conf.json`](src-tauri/tauri.conf.json). The private key lives at `~/.tauri/headroom.key` and never goes in the repo.
-
-Add it as a repo secret:
-
-```bash
-gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/headroom.key
-```
-
-The key doesn't have a password, so `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` can be left unset.
-
-Back the key up somewhere safe, like a password manager. If it's lost, nobody who already has Headroom installed can get updates, and they'll have to download the new version by hand.
-
-### Apple signing (optional)
-
-Without this, releases still build, but they're unsigned, so people have to click **Open Anyway** the first time. With a paid Apple Developer account, add these secrets and the workflow will sign and notarize the app:
-
-| Secret | What it is |
-| --- | --- |
-| `APPLE_CERTIFICATE` | Your "Developer ID Application" certificate exported as a `.p12`, then base64 encoded (`base64 -i cert.p12 \| pbcopy`) |
-| `APPLE_CERTIFICATE_PASSWORD` | The password you set when exporting the `.p12` |
-| `APPLE_SIGNING_IDENTITY` | The certificate's name, e.g. `Developer ID Application: Dylan Hepworth (TEAMID)` |
-| `APPLE_ID` | Your Apple ID email |
-| `APPLE_PASSWORD` | An app-specific password from account.apple.com, not your real password |
-| `APPLE_TEAM_ID` | Your 10-character team ID |
+- **The update signing key**, at `~/.tauri/headroom.key`. Every update has to be signed with it: the app only installs updates signed with the key that matches the public key in [`tauri.conf.json`](src-tauri/tauri.conf.json). It never goes in the repo. Back it up somewhere safe, like a password manager. If it's lost, nobody who already has Headroom installed can get updates, and they'll have to download the new version by hand.
+- **A "Developer ID Application" certificate** in your keychain, for signing the app. Without one, the app still builds, but it's unsigned, and people have to click **Open Anyway** the first time.
+- **An App Store Connect API key** (a `.p8` file, its key ID, and your issuer ID), for notarizing.
 
 ## Cutting a release
 
-The version lives in `package.json` (`tauri.conf.json` reads it from there). `npm version` bumps it, commits, and tags in one go:
+1. Bump the version in `package.json`, `package-lock.json` (Headroom's own two entries), `src-tauri/Cargo.toml`, and Headroom's entry in `src-tauri/Cargo.lock`.
 
-```bash
-npm version patch
-git push --follow-tags
-```
+2. Build the universal app and the disk image, signed, with the update bundle:
 
-Use `minor` or `major` instead of `patch` when it makes sense. Once the workflow finishes, the release is live, and everyone on an older version gets an update notification within a day.
+   ```bash
+   APPLE_SIGNING_IDENTITY="Developer ID Application: …" \
+   APPLE_API_KEY=<key id> APPLE_API_ISSUER=<issuer id> APPLE_API_KEY_PATH=<path to the .p8> \
+   TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/headroom.key" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+   npx tauri build --target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json
+   ```
+
+   The app comes out notarized. Everything's in `src-tauri/target/universal-apple-darwin/release/bundle`.
+
+3. Notarize and staple the disk image too:
+
+   ```bash
+   xcrun notarytool submit dmg/Headroom_<version>_universal.dmg --key <path to the .p8> --key-id <key id> --issuer <issuer id> --wait
+   xcrun stapler staple dmg/Headroom_<version>_universal.dmg
+   ```
+
+4. Write `latest.json`, which the app checks for updates:
+
+   ```json
+   {
+     "version": "<version>",
+     "notes": "What's new, in a sentence.",
+     "pub_date": "<now, like 2026-09-27T21:36:00Z>",
+     "platforms": {
+       "darwin-aarch64": { "signature": "<contents of macos/Headroom.app.tar.gz.sig>", "url": "https://github.com/dylan-hepworth/headroom/releases/download/v<version>/Headroom.app.tar.gz" },
+       "darwin-x86_64": { "…the same…" },
+       "darwin-universal": { "…the same…" }
+     }
+   }
+   ```
+
+5. Commit the version, tag it, push both, and publish the release with all four files:
+
+   ```bash
+   git commit -am "Version <version>" && git tag v<version> && git push origin main v<version>
+   gh release create v<version> --verify-tag --latest --title "Headroom v<version>" --notes "…" \
+     dmg/Headroom_<version>_universal.dmg macos/Headroom.app.tar.gz macos/Headroom.app.tar.gz.sig latest.json
+   ```
+
+Once it's up, everyone on an older version gets an update notification within a day.

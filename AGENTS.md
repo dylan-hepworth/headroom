@@ -76,8 +76,8 @@ Keep it short:
 - `src-tauri/src/wallpaper.rs`: the desktop wallpaper, for the menu bar preview in Settings
 - `src/`: the settings window (React), and the approvals panel in `src/Popover.tsx`. `npm run ui` opens the settings window in a browser on made-up data from `src/bridge.ts`; add `?popover` to the address for the panel.
 - `src-tauri/tauri.conf.json`: app name, bundle id, icons, and the updater's public key. Don't change the key; every installed copy uses it to check updates.
-- `src-tauri/tauri.release.conf.json`: only used by the release workflow, to build the signed update bundle
-- `.github/workflows/release.yml` and `RELEASING.md`: how releases get built and published
+- `src-tauri/tauri.release.conf.json`: only used for releases, to build the signed update bundle
+- `RELEASING.md`: how releases get built and published
 - `assets/icon.png`: source icon. Its art reaches every edge; macOS rounds it. Regenerate the app icons with `npx tauri icon assets/icon.png -o src-tauri/icons`
 - `assets/Headroom.icon`: the same art for macOS 26, which puts icons that only come the older way on a gray plate in notifications. After changing the art, copy it to `assets/Headroom.icon/Assets/art.png` and rebuild `src-tauri/icons/Assets.car` (needs Xcode): `xcrun actool assets/Headroom.icon --compile src-tauri/icons --app-icon Headroom --platform macosx --target-device mac --minimum-deployment-target 11.0 --output-partial-info-plist /tmp/partial.plist`
 
