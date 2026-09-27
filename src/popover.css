@@ -1,0 +1,1421 @@
+/* The panel under the menu bar icon. It's drawn like a macOS popover: frosted, see-through material with a sheen along
+ * the top, a hairline edge that runs unbroken into the arrow, and a soft shadow, in the system's light or dark
+ * appearance. */
+
+.popover-wrap {
+  --pop-bg: rgba(248, 246, 242, 0.72);
+  --pop-bg-solid: rgba(246, 243, 238, 0.98);
+  --pop-edge: rgba(0, 0, 0, 0.13);
+  --pop-sheen: rgba(255, 255, 255, 0.7);
+  --pop-text: rgba(20, 16, 12, 0.9);
+  --pop-text-2: rgba(20, 16, 12, 0.56);
+  --pop-text-3: rgba(20, 16, 12, 0.36);
+  --pop-card: rgba(255, 255, 255, 0.72);
+  /* Cards are solid, so one stacked under another never shows through it */
+  --pop-card-solid: #fbf9f6;
+  --pop-card-edge: rgba(0, 0, 0, 0.07);
+  --pop-card-shadow: 0 1px 2px rgba(60, 40, 20, 0.08), 0 4px 14px rgba(60, 40, 20, 0.06);
+  --pop-fill: rgba(0, 0, 0, 0.055);
+  --pop-fill-hover: rgba(0, 0, 0, 0.085);
+  --pop-fill-strong: rgba(0, 0, 0, 0.13);
+  --pop-card-edge-strong: rgba(0, 0, 0, 0.14);
+  --pop-code: rgba(24, 20, 16, 0.92);
+  --pop-code-text: rgba(255, 248, 238, 0.86);
+  --pop-accent: #df7a4f;
+  --pop-accent-2: #c9603c;
+  --pop-green: #30b45a;
+  --pop-red: #e5484d;
+
+  position: relative;
+  width: 404px;
+  color: var(--pop-text);
+  font:
+    13px/1.38 system-ui,
+    -apple-system,
+    sans-serif;
+  letter-spacing: -0.08px;
+  -webkit-font-smoothing: antialiased;
+  /* One shadow, not two: a second drop shadow falls from the first one too, and darkens everything around the panel.
+     It has faded out well inside the room the window leaves for it (POPOVER_ROOM in main.rs), so it's never cut off. */
+  filter: drop-shadow(0 6px 16px rgba(40, 24, 10, 0.14));
+  /* So nothing inside can push the panel's edge out past its outline */
+  display: flow-root;
+}
+/* Opening and closing move and fade the panel and its shadow together (see Popover) */
+.popover-fade {
+  width: max-content;
+  transform-origin: calc(100% - var(--arrow-right, 60px)) 0;
+  animation: pop-open 0.42s cubic-bezier(0.2, 1.3, 0.35, 1);
+}
+/* After the last card: the panel fades away as its card does, rather than vanishing once the card's gone. Only in
+   the browser preview: in the app, the window itself fades (see hide_popover in main.rs), shadow and all. */
+html:not(.popover-page) .popover-fade.closing {
+  animation: pop-close 0.3s 0.55s ease-in both;
+}
+html:not(.popover-page) .popover-fade.closing.dissolved {
+  animation-delay: 0.45s;
+}
+@keyframes pop-close {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+}
+/* Key hints only while the panel has the keyboard: opened by itself, it doesn't until it's clicked */
+/* Not a compact card's option numbers, which also mark the options */
+.popover-wrap.unfocused kbd:not(.compact-option kbd) {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  .popover-wrap {
+    --pop-bg: rgba(20, 18, 16, 0.82);
+    --pop-bg-solid: rgba(24, 22, 20, 0.98);
+    --pop-edge: rgba(255, 255, 255, 0.16);
+    --pop-sheen: rgba(255, 255, 255, 0.035);
+    --pop-text: rgba(255, 250, 244, 0.93);
+    --pop-text-2: rgba(255, 250, 244, 0.58);
+    --pop-text-3: rgba(255, 250, 244, 0.34);
+    --pop-card: rgba(255, 255, 255, 0.07);
+    --pop-card-solid: #35312d;
+    --pop-card-edge: rgba(255, 255, 255, 0.08);
+    --pop-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 18px rgba(0, 0, 0, 0.18);
+    --pop-fill: rgba(255, 255, 255, 0.09);
+    --pop-fill-hover: rgba(255, 255, 255, 0.14);
+    --pop-fill-strong: rgba(255, 255, 255, 0.2);
+    --pop-card-edge-strong: rgba(255, 255, 255, 0.2);
+    --pop-code: rgba(0, 0, 0, 0.42);
+    --pop-accent: #e8875e;
+    --pop-accent-2: #d06a43;
+    filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.28));
+  }
+}
+@keyframes pop-open {
+  from {
+    opacity: 0;
+    transform: scale(0.86) translateY(-6px);
+  }
+  60% {
+    opacity: 1;
+  }
+}
+
+/* The panel and its arrow are one shape (see `outline` in Popover.tsx): the material is clipped to it, and the edge is
+   drawn along it. */
+.popover-material {
+  position: absolute;
+  inset: 0;
+  background: var(--pop-bg);
+  -webkit-backdrop-filter: blur(34px) saturate(1.9);
+  backdrop-filter: blur(34px) saturate(1.9);
+}
+/* Light catching the top of the glass, and a faint grain so it reads as a material rather than a flat color */
+.popover-sheen {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, var(--pop-sheen) 0, transparent 70px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+.popover-edge {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.popover-edge path {
+  fill: none;
+  stroke: var(--pop-edge);
+  stroke-width: 1;
+}
+
+/* Putting the panel away: in the top row, or in the card's corner when there's only one */
+.popover-close {
+  all: unset;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--pop-fill);
+  color: var(--pop-text-2);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.popover-close svg path {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.popover-close:hover {
+  background: var(--pop-fill-hover);
+  color: var(--pop-text);
+}
+.popover-close.floating {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.ask-card:has(.popover-close.floating) .ask-title {
+  padding-right: 24px;
+}
+
+/* Everything in the panel stays inside it: a card swiped away disappears under the panel's edge */
+.popover {
+  position: relative;
+  margin-top: 11px;
+  padding: 8px;
+  overflow: hidden;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The row along the top when there's more than one request */
+.popover-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pop-text-2);
+}
+.popover-spacer {
+  flex: 1;
+}
+
+/* Which one this is, with arrows either side to move through them */
+.popover-pager {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+  font-variant-numeric: tabular-nums;
+}
+.popover-pager > button {
+  all: unset;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--pop-text-2);
+  font-size: 17px;
+  line-height: 1;
+}
+.popover-pager > button:hover:not(:disabled) {
+  background: var(--pop-fill);
+  color: var(--pop-text);
+}
+.popover-pager > button:disabled {
+  opacity: 0.3;
+}
+
+/* The card to answer, with the others peeking out beneath it like stacked notifications */
+.ask-stack {
+  position: relative;
+  display: grid;
+  touch-action: pan-y;
+  transition: grid-template-rows 0.38s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.ask-stack > .ask-card {
+  grid-area: 1 / 1;
+  align-self: start;
+}
+.ask-card {
+  position: relative;
+  z-index: 3;
+  padding: 13px 14px 15px;
+  border-radius: 11px;
+  background: var(--pop-card-solid);
+  box-shadow:
+    var(--pop-card-shadow),
+    inset 0 0 0 0.5px var(--pop-card-edge);
+  overflow: hidden;
+}
+/* Flipping through: the card on top swipes off to the left and the next rises from the stack, or the previous one
+   swipes back in over it and the old one sinks back down. --dx is how far it was dragged when let go. */
+.ask-card.rise {
+  animation: rise 0.42s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes rise {
+  from {
+    transform: translateY(9px) scale(0.94);
+    opacity: 0.55;
+  }
+}
+.ask-card.slide-in {
+  z-index: 4;
+  animation: slide-in 0.42s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(-115%) rotate(-7deg);
+    opacity: 0.4;
+  }
+}
+.ask-card.out-left {
+  z-index: 4;
+  pointer-events: none;
+  animation: out-left 0.4s cubic-bezier(0.4, 0, 0.8, 0.6) forwards;
+}
+@keyframes out-left {
+  from {
+    transform: translateX(var(--dx, 0)) rotate(var(--tilt, 0deg));
+  }
+  to {
+    transform: translateX(-125%) rotate(-10deg);
+    opacity: 0;
+  }
+}
+.ask-card.out-right {
+  z-index: 4;
+  pointer-events: none;
+  animation: out-right 0.4s cubic-bezier(0.4, 0, 0.8, 0.6) forwards;
+}
+@keyframes out-right {
+  from {
+    transform: translateX(var(--dx, 0)) rotate(var(--tilt, 0deg));
+  }
+  to {
+    transform: translateX(125%) rotate(10deg);
+    opacity: 0;
+  }
+}
+.ask-card.out-back {
+  z-index: 2;
+  pointer-events: none;
+  animation: out-back 0.4s ease-in forwards;
+}
+@keyframes out-back {
+  to {
+    transform: translateY(9px) scale(0.94);
+    opacity: 0;
+  }
+}
+.ask-card.peek {
+  z-index: 2;
+  pointer-events: none;
+  transform: translateY(calc((1 - var(--progress)) * 9px)) scale(calc(0.94 + var(--progress) * 0.06));
+  opacity: calc(0.55 + var(--progress) * 0.45);
+  transition:
+    transform 0.08s linear,
+    opacity 0.08s linear;
+}
+.ask-card.dragging {
+  animation: none;
+  transform: translateX(var(--dx)) rotate(var(--tilt, 0deg));
+  transition: none;
+  cursor: grabbing;
+}
+.ask-card:not(.dragging) {
+  transition: transform 0.3s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+/* Going to the terminal: the card scatters apart through the dissolve filter as it fades and drifts up */
+.ask-card.dissolving {
+  filter: url(#dissolve);
+  animation: dissolve 0.75s ease-in forwards;
+  pointer-events: none;
+}
+@keyframes dissolve {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(1.03);
+  }
+}
+
+.ask-card.leaving {
+  animation: card-out 0.3s 0.55s cubic-bezier(0.5, 0, 0.8, 0.4) both;
+}
+@keyframes card-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+}
+/* The edges of the cards underneath, pinned to the bottom of the card on top (--card-h is its height), so they move
+   with it rather than with the panel as it grows and shrinks. They stay put while the top card is dragged: they stand
+   for the cards below it. */
+.ask-behind {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 7px;
+  border-radius: 0 0 10px 10px;
+  background: var(--pop-card-solid);
+  box-shadow:
+    var(--pop-card-shadow),
+    inset 0 0 0 0.5px var(--pop-card-edge);
+  opacity: 0.75;
+}
+.ask-behind.n1 {
+  z-index: 2;
+  top: calc(var(--card-h, 0px) - 3px);
+}
+.ask-behind.n2 {
+  z-index: 1;
+  left: 20px;
+  right: 20px;
+  top: calc(var(--card-h, 0px) + 1px);
+  opacity: 0.5;
+}
+
+/* The time left before the request goes to the terminal: a thin bar along the bottom of the card, its color set from
+   Popover.tsx as the time runs down (peach, yellow, orange, red). */
+.ask-countdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5px;
+}
+.ask-countdown > div {
+  height: 100%;
+  border-radius: 0 2px 2px 0;
+  transition:
+    width 0.25s linear,
+    background 0.4s;
+}
+/* Paused while the card is pointed at: the bar stays put and breathes */
+.ask-countdown.paused > div {
+  animation: breathe-bar 1.4s ease-in-out infinite;
+}
+@keyframes breathe-bar {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.ask-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+/* The tool's badge */
+.ask-badge {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: white;
+  background: linear-gradient(160deg, #f0956c, var(--pop-accent-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.1),
+    0 2px 6px rgba(201, 96, 60, 0.35);
+}
+.ask-badge.urgent {
+  animation: urgent 1.2s ease-in-out infinite;
+}
+@keyframes urgent {
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.ask-head-text {
+  min-width: 0;
+  flex: 1;
+}
+.ask-title {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.25px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ask-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--pop-text-2);
+}
+.ask-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* A long project name gives way to the countdown and the button beside it */
+.ask-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-project svg {
+  flex: none;
+  opacity: 0.6;
+}
+.ask-left {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--pop-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.ask-left.urgent {
+  color: var(--pop-red);
+}
+/* Handing the request back, to answer it in the conversation */
+.ask-btn.ask-open {
+  gap: 4px;
+}
+.ask-open svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Hands-free: what Claude said this turn, above its question */
+.ask-said {
+  margin: 12px 0 2px;
+  border-radius: 9px;
+  background: var(--pop-fill);
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge);
+}
+.ask-said-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pop-text-3);
+}
+.ask-said-toggle {
+  all: unset;
+  margin-right: -5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: var(--pop-accent);
+  font-weight: 550;
+  cursor: pointer;
+}
+.ask-said-toggle:hover {
+  background: var(--pop-fill-strong);
+}
+.ask-said-body {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 3px 10px 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--pop-text-2);
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.ask-recent {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ask-recent li {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+}
+.ask-recent-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pop-text-3);
+}
+.ask-recent-about {
+  font-style: italic;
+}
+.ask-recent-said .ask-recent-text,
+.ask-recent-answered .ask-recent-text {
+  color: var(--pop-text);
+}
+/* What Claude did in between: quieter, like a note in the margin */
+.ask-recent-did {
+  font-size: 11.5px;
+  color: var(--pop-text-3);
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md blockquote {
+  margin: 0 0 6px;
+}
+.md ul,
+.md ol {
+  padding-left: 18px;
+}
+.md li > p,
+.md li > ul,
+.md li > ol,
+.md li > pre {
+  margin: 2px 0;
+}
+.md .md-heading,
+.md b {
+  color: var(--pop-text);
+  font-weight: 650;
+}
+.md code {
+  font:
+    0.92em ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+}
+.md :not(pre) > code {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--pop-fill-strong);
+}
+.md pre {
+  padding: 6px 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  background: var(--pop-code);
+  color: var(--pop-code-text);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.md blockquote {
+  padding-left: 8px;
+  border-left: 2px solid var(--pop-card-edge-strong);
+}
+.md hr {
+  margin: 8px 0;
+  border: none;
+  border-top: 0.5px solid var(--pop-card-edge-strong);
+}
+.md-link {
+  text-decoration: underline;
+  text-decoration-color: var(--pop-text-3);
+}
+.ask-question {
+  margin: 11px 0 7px;
+  color: var(--pop-text-2);
+}
+.ask-question b {
+  color: var(--pop-text);
+  font-weight: 600;
+}
+.ask-question.strong {
+  color: var(--pop-text);
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+/* A command, like a line in a terminal. Long ones fade out after two lines and open up while pointed at. */
+.ask-command {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--pop-code);
+  color: var(--pop-code-text);
+  font:
+    11.5px/1.5 ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  outline: none;
+}
+.ask-prompt {
+  flex: none;
+  color: var(--pop-accent);
+  font-weight: 700;
+}
+.ask-command-body {
+  min-width: 0;
+  max-height: 3em;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.ask-command.tall .ask-command-body {
+  -webkit-mask-image: linear-gradient(180deg, black 55%, transparent);
+  mask-image: linear-gradient(180deg, black 55%, transparent);
+}
+/* Pointing at it or focusing it opens it up, and anything longer than 16em scrolls, so all of what Allow approves
+   can be read */
+.ask-command.tall:hover .ask-command-body,
+.ask-command.tall:focus .ask-command-body {
+  max-height: 16em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.ask-command code {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.ask-command b {
+  color: white;
+  font-weight: 700;
+}
+
+/* Choices for a question */
+.ask-step {
+  margin: 11px 0 -6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--pop-accent);
+}
+.ask-hint {
+  margin: -3px 0 7px;
+  font-size: 11px;
+  color: var(--pop-text-3);
+}
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 -6px;
+}
+.ask-option {
+  all: unset;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  transition: background 0.12s;
+}
+.ask-option:hover {
+  background: var(--pop-fill);
+}
+.ask-option.picked {
+  background: color-mix(in srgb, var(--pop-accent) 12%, transparent);
+}
+.ask-mark {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin-top: 0.5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--pop-card);
+  box-shadow: inset 0 0 0 1.2px var(--pop-text-3);
+  transition:
+    box-shadow 0.18s,
+    background 0.18s;
+}
+.ask-option.picked .ask-mark {
+  background: white;
+  box-shadow:
+    inset 0 0 0 5px var(--pop-accent),
+    0 1px 3px rgba(201, 96, 60, 0.35);
+}
+.checkbox .ask-mark {
+  border-radius: 5px;
+}
+.checkbox .ask-option.picked .ask-mark {
+  background: linear-gradient(160deg, #f0956c, var(--pop-accent-2));
+  box-shadow: 0 1px 3px rgba(201, 96, 60, 0.35);
+}
+.checkbox .ask-option.picked .ask-mark::after {
+  content: "";
+  position: absolute;
+  left: 5.3px;
+  top: 2.2px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(40deg);
+  animation: tick 0.18s ease-out;
+}
+@keyframes tick {
+  from {
+    transform: rotate(40deg) scale(0.4);
+    opacity: 0;
+  }
+}
+.ask-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ask-option-label {
+  font-weight: 550;
+}
+.ask-option-description {
+  font-size: 11.5px;
+  color: var(--pop-text-2);
+}
+.ask-other {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  margin: 4px 0 4px;
+  padding: 6px 9px;
+  /* Past about six lines it scrolls, so the panel doesn't run off the screen */
+  max-height: 124px;
+  overflow-y: auto;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 7px;
+  background: var(--pop-card);
+  box-shadow:
+    inset 0 0 0 1px var(--pop-accent),
+    0 0 0 3px color-mix(in srgb, var(--pop-accent) 18%, transparent);
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.ask-other::placeholder {
+  color: var(--pop-text-3);
+}
+/* Images going with the answer: thumbnails, and a button to add one (they can be pasted or dropped on it too) */
+.ask-other-box {
+  align-self: stretch;
+}
+.ask-other-box .ask-other {
+  width: 100%;
+}
+.ask-other-box.dropping .ask-other {
+  background: color-mix(in srgb, var(--pop-accent) 10%, var(--pop-card));
+}
+.ask-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+.ask-image {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 7px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge);
+}
+.ask-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ask-image button {
+  all: unset;
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ask-image:hover button,
+.ask-image button:focus-visible {
+  opacity: 1;
+}
+.ask-image-problem,
+.ask-problem {
+  font-size: 11.5px;
+  color: var(--pop-red);
+}
+.ask-problem {
+  margin: 6px 0 -6px;
+}
+.ask-add-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  margin-left: -7px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--pop-text-2);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ask-image + .ask-add-image,
+.ask-image ~ .ask-add-image {
+  margin-left: 0;
+}
+.ask-add-image:hover {
+  background: var(--pop-fill);
+  color: var(--pop-text);
+}
+.ask-add-image svg * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Answers */
+.ask-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 13px;
+}
+.ask-buttons.below {
+  margin-top: 4px;
+}
+.ask-spacer {
+  flex: 1;
+}
+.ask-btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: var(--pop-fill);
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge);
+  font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    transform 0.08s,
+    filter 0.12s;
+}
+.ask-btn:hover {
+  background: var(--pop-fill-strong);
+  box-shadow:
+    inset 0 0 0 1px var(--pop-card-edge-strong),
+    0 1px 3px rgba(0, 0, 0, 0.08);
+  transform: translateY(-0.5px);
+}
+.ask-btn:active {
+  transform: scale(0.97);
+}
+.ask-btn.ghost {
+  background: none;
+  box-shadow: none;
+  color: var(--pop-text-2);
+}
+.ask-btn.ghost:hover {
+  background: var(--pop-fill);
+  color: var(--pop-text);
+}
+.ask-btn.primary {
+  padding: 0 13px;
+  color: white;
+  background: linear-gradient(180deg, #ee9068, var(--pop-accent-2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 2px 8px color-mix(in srgb, var(--pop-accent) 45%, transparent);
+}
+.ask-btn.primary:hover {
+  filter: brightness(1.07);
+}
+.ask-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  box-shadow: none;
+}
+.ask-btn kbd {
+  margin-right: -3px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: 500 10px/1.3 system-ui;
+  background: rgba(0, 0, 0, 0.06);
+  opacity: 0.7;
+}
+.ask-btn.primary kbd {
+  background: rgba(255, 255, 255, 0.22);
+  opacity: 0.9;
+}
+
+/* What the card turns into once answered, for a moment */
+.ask-receipt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 22px 0 18px;
+  font-weight: 600;
+  animation: card-in 0.25s ease-out;
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+.ask-receipt svg circle {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-dasharray: 95;
+  stroke-dashoffset: 95;
+  animation: draw 0.4s ease-out forwards;
+}
+.ask-receipt svg path {
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+  animation: draw 0.3s 0.25s ease-out forwards;
+}
+.ask-receipt.good {
+  color: var(--pop-green);
+}
+.ask-receipt.good svg * {
+  stroke: var(--pop-green);
+}
+.ask-receipt.bad {
+  color: var(--pop-red);
+}
+.ask-receipt.bad svg * {
+  stroke: var(--pop-red);
+}
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The browser preview: a stand-in desktop and menu bar for the popover to hang from */
+.popover-stage {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(1200px 600px at 80% 20%, rgba(255, 220, 190, 0.6), transparent), linear-gradient(135deg, #e9c9a8, #d99a7a 55%, #c9826a);
+}
+@media (prefers-color-scheme: dark) {
+  .popover-stage {
+    background: radial-gradient(1200px 600px at 80% 20%, rgba(120, 70, 40, 0.5), transparent), linear-gradient(135deg, #2b211b, #4a3326 55%, #5c3b2a);
+  }
+}
+.stage-menubar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 18px;
+  height: 24px;
+  padding: 0 14px;
+  background: rgba(255, 250, 244, 0.5);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  font: 500 13px system-ui;
+  color: rgba(0, 0, 0, 0.85);
+}
+@media (prefers-color-scheme: dark) {
+  .stage-menubar {
+    background: rgba(30, 26, 22, 0.5);
+    color: rgba(255, 255, 255, 0.9);
+  }
+}
+.stage-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px;
+  border-radius: 999px;
+}
+.stage-item.open {
+  background: rgba(127, 127, 127, 0.28);
+}
+.stage-item .ring {
+  color: #d97757;
+}
+.popover-stage .popover-fade {
+  position: absolute;
+  top: 25px;
+}
+
+/* Clickable things get the pointing hand; a card that can be dragged to the next one gets the open hand */
+.ask-btn,
+.ask-option,
+.popover-close,
+.popover-pager button,
+.stage-item {
+  cursor: pointer;
+}
+.ask-btn:disabled,
+.popover-pager button:disabled {
+  cursor: default;
+}
+.ask-stack.draggable > .ask-card:not(.dragging) {
+  cursor: grab;
+}
+.ask-stack.draggable .ask-command,
+.ask-stack.draggable .ask-other {
+  cursor: text;
+}
+
+/* In the app, WebKit blurs the whole window's rectangle behind a backdrop filter, whatever the element's clip, so the
+   panel's frosted glass would show as a box around it. There the panel is a near-solid material instead, like macOS's
+   own menus, which are close to opaque. */
+html.popover-page .popover-material {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--pop-bg-solid);
+}
+
+/* In the app, the window is the panel plus room around it for its shadow (POPOVER_ROOM in main.rs): the arrow's point
+   touches the top, and the page reports the whole height, room included, for the window to match. */
+html.popover-page .popover-window {
+  width: max-content;
+  /* The shadow fades out within about 30px of the panel (see the drop shadow on .popover-wrap) */
+  padding: 0 40px 64px;
+}
+
+/* Hands-free: the conversations waiting on you, dropped down when the menu bar item is pointed at (see Pending.tsx) */
+.popover.pending {
+  /* A fixed height: the window follows the panel's, so a share of the window's would only shrink it */
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 10px 8px 8px;
+}
+.pending-heading {
+  margin: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--pop-text-3);
+}
+.pending-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.pending-heading-action {
+  all: unset;
+  font-weight: 550;
+  color: var(--pop-text-3);
+  cursor: pointer;
+}
+.pending-heading-action:hover {
+  color: var(--pop-text);
+}
+.pending-heading:first-child {
+  margin-top: 2px;
+}
+.pending-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pending-row {
+  padding: 8px 10px 9px;
+  border-radius: 10px;
+  transition: background 0.12s;
+}
+.pending-row:hover,
+.pending-row.replying {
+  background: var(--pop-card);
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge);
+}
+.pending-main {
+  display: flex;
+  gap: 9px;
+  cursor: pointer;
+}
+.pending-main .count-dot {
+  display: block;
+  flex: none;
+  margin-top: 6px;
+}
+.pending-text {
+  min-width: 0;
+  flex: 1;
+}
+.pending-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pending-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+.pending-ago {
+  flex: none;
+  font-size: 11px;
+  color: var(--pop-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.pending-sub {
+  font-size: 11.5px;
+  color: var(--pop-text-3);
+}
+.pending-what {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12.5px;
+  color: var(--pop-text-2);
+}
+.pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0 16px;
+}
+.pending-actions .ask-btn {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.pending-reply {
+  margin: 8px 0 0 16px;
+}
+.pending-reply .ask-other {
+  width: 100%;
+}
+.pending-reply .pending-actions {
+  margin-left: 0;
+}
+/* Working: the accent, breathing, the way it's shown while a session's busy */
+.pending-main .count-dot.working {
+  background: var(--pop-accent);
+  animation: pending-breathe 1.6s ease-in-out infinite;
+}
+@keyframes pending-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pending-main .count-dot.working {
+    animation: none;
+  }
+}
+.pending-sent {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--pop-green);
+}
+.pending-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--pop-text-3);
+}
+.pending-note {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: white;
+  font: 12px system-ui;
+}
+
+/* Compact cards: a request in a few lines (see CompactQuestion in Popover.tsx) */
+.ask-card.compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 11px;
+  font-size: 12.5px;
+}
+.compact-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.compact-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  background: linear-gradient(160deg, #f0956c, var(--pop-accent-2));
+}
+.compact-glyph.permission {
+  background: linear-gradient(160deg, #8f8a84, #625d57);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.compact-title {
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-project {
+  flex: 1;
+  color: var(--pop-text-3);
+  white-space: nowrap;
+}
+.compact-left {
+  color: var(--pop-text-3);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+.compact-left.urgent {
+  color: var(--pop-red);
+}
+.compact-glyph svg {
+  width: 12px;
+  height: 12px;
+}
+.compact-step {
+  margin-right: 6px;
+  color: var(--pop-text-3);
+  font-weight: 500;
+}
+.compact-icon {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--pop-text-2);
+  cursor: pointer;
+}
+.compact-icon:hover {
+  background: var(--pop-fill);
+}
+.compact-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+}
+.compact-said {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  color: var(--pop-text-2);
+  line-height: 1.45;
+  cursor: pointer;
+}
+.compact-said.open {
+  display: block;
+  /* Only a reply longer than the screen has room for scrolls */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.compact-who {
+  margin-right: 6px;
+  color: var(--pop-text-3);
+  font-weight: 600;
+}
+.compact-question {
+  font-weight: 600;
+}
+.compact-options {
+  display: flex;
+  flex-direction: column;
+  margin: -2px -6px 0;
+}
+.compact-option {
+  all: unset;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 6px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.compact-option kbd {
+  flex: none;
+  width: 14px;
+  color: var(--pop-text-3);
+  font:
+    500 11px ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  text-align: center;
+}
+/* The label and its detail run on as one line of text, cut off at the edge; pointed at, all of it wraps under the
+   label */
+.compact-option-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-option:hover .compact-option-text {
+  white-space: normal;
+}
+.compact-option-label {
+  margin-right: 4px;
+  font-weight: 550;
+  transition: color 0.1s;
+}
+.compact-option-detail {
+  color: var(--pop-text-3);
+}
+.compact-option.other .compact-option-label {
+  color: var(--pop-text-2);
+  font-weight: 500;
+}
+.compact-option:hover kbd,
+.compact-option:hover .compact-option-label,
+.compact-option.picked kbd,
+.compact-option.picked .compact-option-label {
+  color: var(--pop-accent);
+}
+.compact-option:hover .compact-option-detail {
+  color: var(--pop-text-2);
+}
+.compact-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+/* Lined up with the text above it, not its own padding */
+.compact-foot .ask-btn.ghost:first-child {
+  margin-left: -11px;
+}
+.compact-command {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--pop-code);
+  color: var(--pop-code-text);
+  font:
+    11px/1.45 ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-command:hover {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

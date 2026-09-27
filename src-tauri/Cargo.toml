@@ -1,0 +1,31 @@
+[package]
+name = "headroom"
+description = "Claude usage in your Mac menu bar"
+license = "Apache-2.0"
+version = "1.0.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+chrono = "0.4"
+tokio = { version = "1", features = ["time", "sync", "macros"] }
+keyring = { version = "3", features = ["apple-native"] }
+tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-autostart = "2"
+objc2 = "0.6"
+plist = "1"
+base64 = "0.22"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSAttributedString", "NSDictionary", "NSValue", "NSURL", "NSGeometry", "NSArray", "NSError"] }
+objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "block2"] }
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSToolbar", "NSResponder", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSFont", "NSColor", "NSAttributedString", "NSWorkspace", "NSRunningApplication", "NSScreen", "NSGraphics"] }
+
+[profile.release]
+strip = true
+lto = true
