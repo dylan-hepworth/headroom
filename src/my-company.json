@@ -1,0 +1,277 @@
+{
+  "id": "my-company",
+  "name": "My company",
+  "agents": [
+    {
+      "id": "lead",
+      "name": "Lead",
+      "icon": {
+        "emoji": "🧭"
+      },
+      "model": "Opus",
+      "role": "Lead",
+      "x": 470,
+      "y": 20,
+      "brief": "Break the goal down for the departments, and bring their work together.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files",
+        "Run commands"
+      ]
+    },
+    {
+      "id": "mkt",
+      "name": "Marketing",
+      "icon": {
+        "emoji": "📣"
+      },
+      "model": "Opus",
+      "role": "Manager",
+      "x": 110,
+      "y": 160,
+      "brief": "Everything we say about the product, in the voice guide's tone.",
+      "commands": [
+        "/brand-voice"
+      ],
+      "tools": [
+        "Read files",
+        "Edit files",
+        "Browse the web"
+      ]
+    },
+    {
+      "id": "dev",
+      "name": "Development",
+      "icon": {
+        "emoji": "🛠️"
+      },
+      "model": "Opus",
+      "role": "Manager",
+      "x": 470,
+      "y": 160,
+      "brief": "Build what's asked, in small reviewed changes. Never push to main.",
+      "commands": [
+        "/review"
+      ],
+      "tools": [
+        "Read files",
+        "Edit files",
+        "Run commands"
+      ]
+    },
+    {
+      "id": "rnd",
+      "name": "R&D",
+      "icon": {
+        "emoji": "🔭"
+      },
+      "model": "Opus",
+      "role": "Manager",
+      "x": 860,
+      "y": 160,
+      "brief": "Find out what's possible and what it costs, with sources.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Browse the web"
+      ]
+    },
+    {
+      "id": "copy",
+      "name": "Copywriter",
+      "icon": {
+        "emoji": "✍️"
+      },
+      "model": "Sonnet",
+      "role": "Worker",
+      "x": 20,
+      "y": 320,
+      "brief": "Write the words: pages, posts, and emails.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    },
+    {
+      "id": "social",
+      "name": "Social posts",
+      "icon": {
+        "emoji": "📅"
+      },
+      "model": "Haiku",
+      "role": "Worker",
+      "x": 190,
+      "y": 320,
+      "brief": "Turn what's written into short posts for each network.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    },
+    {
+      "id": "coder",
+      "name": "Coder",
+      "icon": {
+        "emoji": "💻"
+      },
+      "model": "Sonnet",
+      "role": "Worker",
+      "x": 470,
+      "y": 320,
+      "brief": "Make the change, with tests.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    },
+    {
+      "id": "review",
+      "name": "Code reviewer",
+      "icon": {
+        "emoji": "🔍"
+      },
+      "model": "Sonnet",
+      "role": "Worker",
+      "x": 420,
+      "y": 470,
+      "brief": "Review the Coder's change for bugs and clarity.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    },
+    {
+      "id": "tests",
+      "name": "Tester",
+      "icon": {
+        "emoji": "🧪"
+      },
+      "model": "Haiku",
+      "role": "Worker",
+      "x": 620,
+      "y": 470,
+      "brief": "Run the tests and fix what fails.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files",
+        "Run commands"
+      ],
+      "until": "the tests pass"
+    },
+    {
+      "id": "research",
+      "name": "Researcher",
+      "icon": {
+        "emoji": "📚"
+      },
+      "model": "Sonnet",
+      "role": "Worker",
+      "x": 780,
+      "y": 320,
+      "brief": "Look into the options, with sources.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Browse the web"
+      ]
+    },
+    {
+      "id": "sum",
+      "name": "Summarizer",
+      "icon": {
+        "emoji": "🗂️"
+      },
+      "model": "Haiku",
+      "role": "Worker",
+      "x": 950,
+      "y": 320,
+      "brief": "Sum up each source in a few lines.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    },
+    {
+      "id": "brief",
+      "name": "Findings",
+      "icon": {
+        "emoji": "📝"
+      },
+      "model": "Haiku",
+      "role": "Worker",
+      "x": 865,
+      "y": 470,
+      "brief": "Write up what was found, as a short brief.",
+      "commands": [],
+      "tools": [
+        "Read files",
+        "Edit files"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "lead",
+      "to": "mkt"
+    },
+    {
+      "from": "lead",
+      "to": "dev"
+    },
+    {
+      "from": "lead",
+      "to": "rnd"
+    },
+    {
+      "from": "mkt",
+      "to": "copy"
+    },
+    {
+      "from": "mkt",
+      "to": "social"
+    },
+    {
+      "from": "copy",
+      "to": "social"
+    },
+    {
+      "from": "dev",
+      "to": "coder"
+    },
+    {
+      "from": "coder",
+      "to": "review",
+      "loop": {
+        "until": "approved",
+        "rounds": 3
+      }
+    },
+    {
+      "from": "coder",
+      "to": "tests"
+    },
+    {
+      "from": "rnd",
+      "to": "research"
+    },
+    {
+      "from": "rnd",
+      "to": "sum"
+    },
+    {
+      "from": "research",
+      "to": "brief"
+    },
+    {
+      "from": "sum",
+      "to": "brief"
+    }
+  ]
+}

@@ -1,0 +1,584 @@
+/* The agent planner mockup (see PlanPreview.tsx): a grid of agents wired together, and a panel for the one picked */
+
+.plan-stage {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  font:
+    13px/1.4 system-ui,
+    -apple-system,
+    sans-serif;
+  background: radial-gradient(1200px 600px at 80% 20%, rgba(255, 220, 190, 0.6), transparent), linear-gradient(135deg, #e9c9a8, #d99a7a 55%, #c9826a);
+}
+@media (prefers-color-scheme: dark) {
+  .plan-stage {
+    background: radial-gradient(1200px 600px at 80% 20%, rgba(120, 70, 40, 0.5), transparent), linear-gradient(135deg, #2b211b, #4a3326 55%, #5c3b2a);
+  }
+}
+
+.plan-window {
+  width: 1420px;
+  border-radius: 14px;
+  color: var(--pop-text);
+  background: var(--pop-bg-solid);
+  box-shadow:
+    0 0 0 0.5px var(--pop-edge),
+    0 18px 50px rgba(40, 24, 10, 0.25);
+  overflow: hidden;
+}
+.plan-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid var(--pop-card-edge-strong);
+}
+.template-menu {
+  all: unset;
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.template-menu:hover {
+  background: var(--pop-fill);
+}
+.template-menu span {
+  color: var(--pop-text-3);
+  font-weight: 400;
+}
+.plan-sub {
+  font-size: 12px;
+  color: var(--pop-text-3);
+}
+.plan-body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  height: 640px;
+}
+
+.grid-canvas {
+  position: relative;
+  overflow: auto;
+  background-color: var(--pop-card-solid);
+  background-image: radial-gradient(circle, var(--pop-card-edge-strong) 1px, transparent 1.2px);
+  background-size: 20px 20px;
+  touch-action: none;
+  user-select: none;
+}
+.grid-wires {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.grid-wires marker path {
+  fill: var(--pop-text-3);
+}
+.wire path {
+  fill: none;
+  stroke: var(--pop-text-3);
+  stroke-width: 1.5;
+}
+.wire .wire-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+.wire.selected path:not(.wire-hit) {
+  stroke: var(--pop-accent);
+  stroke-width: 2;
+}
+.wire .wire-loop {
+  stroke: var(--pop-accent);
+  stroke-dasharray: 4 4;
+}
+.wire.drawing {
+  fill: none;
+  stroke: var(--pop-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.loop-tag {
+  float: right;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--pop-accent);
+  background: color-mix(in srgb, var(--pop-accent) 12%, var(--pop-card-solid));
+}
+
+.grid-node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px 0 10px;
+  border-radius: 12px;
+  background: var(--pop-bg-solid);
+  box-shadow:
+    0 1px 3px rgba(40, 24, 10, 0.12),
+    inset 0 0 0 0.5px var(--pop-card-edge-strong);
+  cursor: grab;
+}
+.grid-node:active {
+  cursor: grabbing;
+}
+.grid-node.lead {
+  box-shadow:
+    0 1px 3px rgba(40, 24, 10, 0.12),
+    inset 0 0 0 1px color-mix(in srgb, var(--pop-accent) 55%, transparent);
+}
+.grid-node.selected {
+  box-shadow:
+    0 4px 14px rgba(40, 24, 10, 0.18),
+    inset 0 0 0 2px var(--pop-accent);
+}
+.grid-node-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.grid-node-text b {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+.model.opus {
+  color: #b5532e;
+  background: rgba(223, 122, 79, 0.16);
+}
+.model.sonnet {
+  color: #3a6fd1;
+  background: rgba(59, 130, 246, 0.14);
+}
+.model.haiku {
+  color: #2f8a55;
+  background: rgba(48, 180, 90, 0.15);
+}
+.until {
+  font-size: 10.5px;
+  color: var(--pop-accent);
+}
+.grid-port {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: var(--pop-bg-solid);
+  box-shadow: inset 0 0 0 1.5px var(--pop-text-3);
+  cursor: crosshair;
+}
+.grid-port:hover {
+  box-shadow: inset 0 0 0 3px var(--pop-accent);
+}
+
+.inspector {
+  padding: 16px;
+  overflow-y: auto;
+  border-left: 0.5px solid var(--pop-card-edge-strong);
+}
+.inspector.empty {
+  color: var(--pop-text-3);
+}
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.inspector-name,
+.inspector-field {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--pop-text);
+}
+.inspector-name {
+  font-size: 15px;
+  font-weight: 650;
+}
+.inspector-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.inspector-sub,
+.inspector-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--pop-text-3);
+}
+.inspector-label {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--pop-text-3);
+}
+.inspector-field {
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--pop-card-solid);
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge-strong);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.inspector-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--pop-fill);
+}
+.segmented button {
+  all: unset;
+  flex: 1;
+  padding: 4px 0;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--pop-text-2);
+  cursor: pointer;
+}
+.segmented button.on {
+  color: var(--pop-text);
+  background: var(--pop-card-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.chip {
+  all: unset;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font:
+    11.5px ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  background: var(--pop-fill);
+}
+.chip.add {
+  font-family: inherit;
+  color: var(--pop-text-3);
+  cursor: pointer;
+}
+
+/* While the plan runs */
+.grid-doing {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--pop-text-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.grid-node.needs-you {
+  box-shadow:
+    0 4px 14px rgba(245, 180, 60, 0.3),
+    inset 0 0 0 1.5px #f5b43c;
+}
+.grid-node.done {
+  opacity: 0.75;
+}
+.grid-node.working .plan-dot {
+  animation: pending-breathe 1.6s ease-in-out infinite;
+}
+.plan-dot {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--pop-bg-solid);
+  background: var(--pop-text-3);
+}
+.plan-dot.working {
+  background: #d97757;
+}
+.plan-dot.needs-you {
+  background: #f5b43c;
+}
+.plan-dot.done {
+  background: #3b82f6;
+}
+.live-now {
+  font-size: 13px;
+}
+.live-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--pop-text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.live-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.live-open {
+  margin: 14px 0 0 -11px;
+}
+.running-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 420px;
+  margin: 0 auto 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: var(--pop-text);
+  background: var(--pop-bg-solid);
+  box-shadow: 0 0 0 0.5px var(--pop-edge);
+}
+.running-row div div {
+  font-size: 12px;
+  color: var(--pop-text-3);
+}
+.plan-pill {
+  all: unset;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pop-accent);
+  background: color-mix(in srgb, var(--pop-accent) 14%, transparent);
+  cursor: pointer;
+}
+.plan-stage:has(.running-row) {
+  place-items: start center;
+  padding: 24px 0;
+}
+
+/* The planner in its own window: all of it, with room for the window's buttons at the top left */
+.plan-window.planner {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  box-shadow: none;
+}
+.plan-window.planner .plan-toolbar {
+  padding-left: 84px;
+}
+.plan-window.planner .plan-body {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+/* In a browser, the planner sits in a window of its own drawn around it, the size the app opens it */
+html.browser .plan-window.planner {
+  inset: 50% auto auto 50%;
+  width: 1280px;
+  height: 760px;
+  transform: translate(-50%, -50%);
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 0.5px var(--pop-edge),
+    0 18px 50px rgba(40, 24, 10, 0.25);
+}
+html.browser body:has(.planner) {
+  background: radial-gradient(1200px 600px at 80% 20%, rgba(255, 220, 190, 0.6), transparent), linear-gradient(135deg, #e9c9a8, #d99a7a 55%, #c9826a);
+}
+
+.template {
+  position: relative;
+}
+.template-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  margin-top: 4px;
+  padding: 5px;
+  border-radius: 9px;
+  background: var(--pop-bg-solid);
+  box-shadow:
+    0 0 0 0.5px var(--pop-edge),
+    0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.template-list button {
+  all: unset;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.template-list button:hover {
+  color: white;
+  background: var(--pop-accent);
+}
+.template-list button.danger:not(:hover) {
+  color: var(--pop-red);
+}
+.template-list hr {
+  width: 100%;
+  margin: 4px 0;
+  border: none;
+  border-top: 0.5px solid var(--pop-card-edge-strong);
+}
+.template-name {
+  all: unset;
+  min-width: 60px;
+  max-width: 220px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.template-name:hover,
+.template-name:focus {
+  background: var(--pop-fill);
+}
+.plan-window.planner .template-menu {
+  font-size: 0;
+  padding: 4px 6px;
+}
+.plan-window.planner .template-menu span {
+  font-size: 12px;
+}
+.plan-issues {
+  padding: 6px 18px 6px 84px;
+  font-size: 12px;
+  color: #b07a12;
+  background: rgba(245, 180, 60, 0.14);
+  border-bottom: 0.5px solid var(--pop-card-edge-strong);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chip button {
+  all: unset;
+  color: var(--pop-text-3);
+  cursor: pointer;
+}
+.chip button:hover {
+  color: var(--pop-text);
+}
+.chip-input {
+  all: unset;
+  width: 90px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font:
+    11.5px ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  box-shadow: inset 0 0 0 0.5px var(--pop-card-edge-strong);
+}
+.inspector .icon-picker {
+  margin: 4px 0 8px;
+}
+.delete-hint {
+  margin-top: 18px;
+}
+
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: start center;
+  padding-top: 60px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.sheet {
+  width: 560px;
+  max-height: calc(100% - 100px);
+  overflow-y: auto;
+  padding: 18px 18px 0;
+  border-radius: 12px;
+  background: var(--pop-bg-solid);
+  box-shadow:
+    0 0 0 0.5px var(--pop-edge),
+    0 18px 50px rgba(0, 0, 0, 0.28);
+}
+.sheet .plan-foot {
+  position: sticky;
+  bottom: 0;
+  margin: 12px -18px 0;
+  background: var(--pop-bg-solid);
+}
+.sheet-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sheet-chat {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.sheet-chat:hover {
+  background: var(--pop-fill);
+}
+.sheet-chat.on {
+  background: color-mix(in srgb, var(--pop-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--pop-accent);
+}
+.sheet-how {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--pop-text-3);
+}
+.sheet-text {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font:
+    12px/1.5 system-ui,
+    -apple-system,
+    sans-serif;
+  color: var(--pop-text-2);
+  background: var(--pop-fill);
+}
+.plan-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 0.5px solid var(--pop-card-edge-strong);
+}

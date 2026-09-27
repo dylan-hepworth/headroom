@@ -6,7 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Pending } from "./Pending";
 import type { ChatIcon } from "./Avatar";
+import type { Plan } from "./Planner";
 import type { Ask } from "./Popover";
+import myCompany from "./my-company.json";
 
 export const inApp = "__TAURI_INTERNALS__" in window;
 
@@ -171,6 +173,10 @@ export const bridge = inApp
       markSeen: (sessions: string[]) => invoke("mark_seen", { sessions }),
       setIcon: (session: string, icon: ChatIcon | null, wholeProject: boolean) => invoke("set_icon", { session, icon, wholeProject }),
       emojiNames: () => invoke<[string, string][]>("emoji_names"),
+      plans: () => invoke<Plan[]>("plans"),
+      savePlan: (plan: Plan) => invoke("save_plan", { plan }),
+      deletePlan: (id: string) => invoke("delete_plan", { id }),
+      openPlanner: () => invoke("open_planner_now"),
       popoverCards: () => invoke("popover_cards"),
       /** The user's writing a reply in the list, which stays down meanwhile. */
       saveToken: (token: string) => invoke("save_token", { token }),
@@ -215,6 +221,10 @@ function mockBridge() {
     stopStep: async (_session: string) => {},
     markSeen: async (_sessions: string[]) => {},
     setIcon: async (_session: string, _icon: ChatIcon | null, _wholeProject: boolean) => {},
+    plans: async (): Promise<Plan[]> => [myCompany as Plan],
+    savePlan: async (_plan: Plan) => {},
+    deletePlan: async (_id: string) => {},
+    openPlanner: async () => {},
     emojiNames: async (): Promise<[string, string][]> => [
       ["🦊", "fox"],
       ["🐙", "octopus"],

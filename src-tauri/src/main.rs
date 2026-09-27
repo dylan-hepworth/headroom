@@ -27,6 +27,7 @@ mod desktop;
 mod hooks;
 mod icons;
 mod notifications;
+mod plans;
 mod sessions;
 mod transcripts;
 mod wallpaper;
@@ -1606,7 +1607,18 @@ fn open_settings_at(app: &AppHandle, pane: &str, setting: Option<&str>) {
         return;
     };
     round_corners(&w);
+    in_dock_while_open(app, &w);
+    let _ = w.set_focus();
+}
 
+/// How many of Headroom's windows are open that put it in the Dock and the app switcher.
+static DOCK_WINDOWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Headroom lives in the menu bar, but while one of its windows is open, it's in the Dock and the app switcher too, with
+/// the usual menus, like any app. It goes back to the menu bar alone once the last of them is closed.
+fn in_dock_while_open(app: &AppHandle, w: &tauri::WebviewWindow) {
+    use std::sync::atomic::Ordering::SeqCst;
+    DOCK_WINDOWS.fetch_add(1, SeqCst);
     let _ = app.set_activation_policy(ActivationPolicy::Regular);
     if let Ok(menu) = Menu::default(app) {
         let _ = app.set_menu(menu);
@@ -1614,10 +1626,54 @@ fn open_settings_at(app: &AppHandle, pane: &str, setting: Option<&str>) {
     let handle = app.clone();
     w.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
-            let _ = handle.set_activation_policy(ActivationPolicy::Accessory);
+            if DOCK_WINDOWS.fetch_sub(1, SeqCst) == 1 {
+                let _ = handle.set_activation_policy(ActivationPolicy::Accessory);
+            }
         }
     });
+}
+
+/// Open the agent planner (see Planner.tsx), or bring it forward.
+fn open_planner(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("planner") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let Ok(w) = WebviewWindowBuilder::new(app, "planner", WebviewUrl::App("index.html?planner".into()))
+        .title("Plan Agents")
+        .inner_size(1280.0, 760.0)
+        .min_inner_size(900.0, 560.0)
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .center()
+        .build()
+    else {
+        return;
+    };
+    in_dock_while_open(app, &w);
     let _ = w.set_focus();
+}
+
+#[tauri::command]
+fn open_planner_now(app: AppHandle) {
+    open_planner(&app);
+}
+
+/// The saved agent plans (see plans.rs).
+#[tauri::command]
+fn plans(state: tauri::State<Arc<State>>) -> Vec<Value> {
+    plans::list(&state.config_dir)
+}
+
+#[tauri::command]
+fn save_plan(plan: Value, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    plans::save(&state.config_dir, &plan)
+}
+
+#[tauri::command]
+fn delete_plan(id: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    plans::delete(&state.config_dir, &id)
 }
 
 /// The popover's panel width, and the room around it for its shadow, in points. The window is the panel plus that room
@@ -1872,6 +1928,7 @@ fn menu_clicked(state: Arc<State>, id: &str) {
             let _ = Command::new("open").arg(USAGE_PAGE).spawn();
         }
         "settings" => open_settings(&state.app, "general"),
+        "planner" => open_planner(&state.app),
         "show_requests" => show_popover(&state.app, true),
         "update" => update_clicked(state),
         _ => {}
@@ -3098,6 +3155,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
     let usage_page = MenuItem::with_id(app, "usage", "Open Usage Page", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "Refresh Now", true, Some("CmdOrCtrl+R"))?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let planner = MenuItem::with_id(app, "planner", "Plan Agents…", true, None::<&str>)?;
     let show_requests = MenuItem::with_id(app, "show_requests", "Show Waiting Requests", false, None::<&str>)?;
     let resume_item = MenuItem::with_id(app, "resume", "Resume Now", false, None::<&str>)?;
     let pause_menu = Submenu::with_items(
@@ -3125,6 +3183,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         &separators[1],
         &show_requests,
         &pause_menu,
+        &planner,
         &settings,
         &update_item,
         &quit,
@@ -3274,6 +3333,10 @@ fn main() {
             send_to_session,
             stop_step,
             set_icon,
+            plans,
+            save_plan,
+            delete_plan,
+            open_planner_now,
             emoji_names,
             mark_seen,
             open_pending,
