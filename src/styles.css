@@ -1444,3 +1444,16 @@ section.found > .group {
     box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent);
   }
 }
+
+/* A session's icon, with its status on the corner (see Avatar.tsx) */
+.row.session .avatar {
+  margin-top: 1px;
+}
+.row.session .avatar-corner .state-dot {
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--card);
+}
+.session-picker .icon-picker {
+  max-width: 330px;
+  margin: 0 12px 10px 52px;
+}

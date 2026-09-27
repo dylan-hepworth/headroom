@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PaneProps } from "../App";
+import { Avatar, choosePicture, IconPicker, type ChatIcon } from "../Avatar";
 import { bridge, needsAnswer, yourTurn, type Session } from "../bridge";
 import { Hook, Terminal } from "../icons";
 import { Section } from "../ui";
@@ -35,47 +36,76 @@ function SessionRow({ s, now }: { s: Session; now: number }) {
   const held = s.held;
   // A request waiting in Headroom shows itself, since that's the one the buttons answer
   const ask = held ?? s.request;
+  const [picking, setPicking] = useState(false);
+  const pick = async (icon: ChatIcon | "picture" | null, wholeProject: boolean) => {
+    setPicking(false);
+    const picked = icon === "picture" ? await choosePicture() : icon;
+    if (icon !== "picture" || picked) bridge.setIcon(s.id, picked, wholeProject);
+  };
   return (
-    <div className={`row session ${s.state}`}>
-      <span className={`state-dot ${s.state}`} />
-      <div className="label">
-        <div className="title">
-          {s.title ?? s.project}
-          <span className="session-state">{[STATE_TEXT[s.state], ago(s.since, now), s.title && s.project].filter(Boolean).join(" · ")}</span>
+    <>
+      <div className={`row session ${s.state}`}>
+        {s.icon ? (
+          <Avatar
+            icon={s.icon}
+            size={28}
+            corner={<span className={`state-dot ${s.state}`} />}
+            onClick={() => setPicking(!picking)}
+            title="Change its icon"
+          />
+        ) : (
+          <span className={`state-dot ${s.state}`} />
+        )}
+        <div className="label">
+          <div className="title">
+            {s.title ?? s.project}
+            <span className="session-state">{[STATE_TEXT[s.state], ago(s.since, now), s.title && s.project].filter(Boolean).join(" · ")}</span>
+          </div>
+          {ask && (
+            <div className="request">
+              <span className="request-tool">{held?.kind === "question" ? "Question" : ask.tool}</span>
+              {ask.detail && <code>{ask.detail}</code>}
+            </div>
+          )}
+          {s.last && <div className="detail quote">{s.last}</div>}
+          {s.activity && <div className="detail">{s.activity}</div>}
+          {!ask && !s.last && !s.activity && <div className="detail">{s.path}</div>}
         </div>
-        {ask && (
-          <div className="request">
-            <span className="request-tool">{held?.kind === "question" ? "Question" : ask.tool}</span>
-            {ask.detail && <code>{ask.detail}</code>}
+        {held?.kind === "question" && (
+          <div className="row-end">
+            <button className="btn primary" onClick={() => bridge.showPopover()}>
+              Answer…
+            </button>
           </div>
         )}
-        {s.last && <div className="detail quote">{s.last}</div>}
-        {s.activity && <div className="detail">{s.activity}</div>}
-        {!ask && !s.last && !s.activity && <div className="detail">{s.path}</div>}
-      </div>
-      {held?.kind === "question" && (
-        <div className="row-end">
-          <button className="btn primary" onClick={() => bridge.showPopover()}>
-            Answer…
-          </button>
-        </div>
-      )}
-      {held?.kind === "permission" && (
-        <div className="row-end">
-          <button className="btn" onClick={() => bridge.answer(held.id, "deny")}>
-            Deny
-          </button>
-          {held.canSession && (
-            <button className="btn" onClick={() => bridge.answer(held.id, "session")}>
-              Allow for Session
+        {held?.kind === "permission" && (
+          <div className="row-end">
+            <button className="btn" onClick={() => bridge.answer(held.id, "deny")}>
+              Deny
             </button>
-          )}
-          <button className="btn primary" onClick={() => bridge.answer(held.id, "allow")}>
-            Allow
-          </button>
+            {held.canSession && (
+              <button className="btn" onClick={() => bridge.answer(held.id, "session")}>
+                Allow for Session
+              </button>
+            )}
+            <button className="btn primary" onClick={() => bridge.answer(held.id, "allow")}>
+              Allow
+            </button>
+          </div>
+        )}
+      </div>
+      {picking && s.icon && (
+        <div className="pop-vars session-picker">
+          <IconPicker
+            icon={s.icon}
+            project={s.project}
+            onPick={pick}
+            onPicture={(whole) => pick("picture", whole)}
+            onReset={() => pick(null, false)}
+          />
         </div>
       )}
-    </div>
+    </>
   );
 }
 

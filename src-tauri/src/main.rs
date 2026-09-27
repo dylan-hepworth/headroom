@@ -25,6 +25,7 @@ use tokio::sync::Notify;
 mod context;
 mod desktop;
 mod hooks;
+mod icons;
 mod notifications;
 mod sessions;
 mod transcripts;
@@ -393,6 +394,8 @@ struct State {
     list_mode: Mutex<bool>,
     /// The app in front, as last written for the hooks, so they hear when it changes (see hooks.rs `looked_at`).
     told_front: Mutex<Option<String>>,
+    /// Each chat's icon (see icons.rs).
+    icons: Mutex<icons::Icons>,
 
     /// The daily recap: whether it's on, and when it goes out (from `RECAP_TIMES`). Also today's use so far.
     recap: Mutex<(bool, &'static str)>,
@@ -908,10 +911,28 @@ fn notify_to(state: &State, title: &str, body: &str, on_click: Option<OnClick>) 
     alert(state, title, body, on_click);
 }
 
+/// A notification about a session: its title starts with the chat's emoji, or its picture goes beside the text.
+fn notify_about(state: &State, session: &str, title: &str, body: &str, on_click: Option<OnClick>) {
+    if is_paused(state) {
+        return;
+    }
+    let icon = icon_of(state, session).unwrap_or_default();
+    let title = match icons::emoji(&icon) {
+        Some(emoji) => format!("{emoji} {title}"),
+        None => title.to_string(),
+    };
+    let picture = icons::picture_file(&icon, &state.config_dir);
+    alert_with(state, &title, body, on_click, picture.as_deref());
+}
+
 /// Send a notification, paused or not: `notify_to` without the check, for the one the user asks for ("Send Test
 /// Alert"). Each gets an ID, which is what a click comes back with, or its title and text when it goes through the
 /// plugin (the last few dozen are plenty to remember).
 fn alert(state: &State, title: &str, body: &str, on_click: Option<OnClick>) {
+    alert_with(state, title, body, on_click, None);
+}
+
+fn alert_with(state: &State, title: &str, body: &str, on_click: Option<OnClick>, picture: Option<&Path>) {
     static SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = format!("headroom-{}-{}", std::process::id(), SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     if let Some(on_click) = on_click {
@@ -927,7 +948,7 @@ fn alert(state: &State, title: &str, body: &str, on_click: Option<OnClick>) {
         // Running with `tauri dev`, or a copy built without a Developer ID
         let _ = state.app.notification().builder().title(title).body(body).show();
     } else {
-        notifications::send(&id, title, body);
+        notifications::send(&id, title, body, picture);
     }
     if *state.persistent_alerts.lock().unwrap() {
         return;
@@ -2054,7 +2075,8 @@ fn get_state(state: tauri::State<Arc<State>>) -> Value {
         "shares": shares,
         "sessions": if *state.hooks_on.lock().unwrap() {
             let answerable = approvals.0;
-            state.sessions.lock().unwrap().to_json(hold_time(&state), &hooks::extra_time(), answerable)
+            let list = state.sessions.lock().unwrap().to_json(hold_time(&state), &hooks::extra_time(), answerable);
+            with_icons(&state, list.as_array().cloned().unwrap_or_default(), "id").into()
         } else {
             json!([])
         },
@@ -2364,7 +2386,7 @@ fn alert_full_contexts(state: &State, names: &[(String, String)], at: u32) {
         );
         let app = state.sessions.lock().unwrap().app_of(&c.session);
         let on_click = OnClick::Session { id: c.session.clone(), app };
-        notify_to(state, &format!("{name}: context is {}% full", c.pct), &body, Some(on_click));
+        notify_about(state, &c.session, &format!("{name}: context is {}% full", c.pct), &body, Some(on_click));
     }
 }
 
@@ -2400,7 +2422,7 @@ fn notify_session(state: &State, change: sessions::Change) {
             } else {
                 (format!("{project} needs permission"), format!("{tool}: {detail}"))
             };
-            notify_to(state, &title, &body, on_click);
+            notify_about(state, &change.session, &title, &body, on_click);
         }
         ChangeKind::Finished { reply, ran } if alerts.done => {
             let too_quick = ran.is_some_and(|ran| ran.num_seconds() < alerts.min_run as i64);
@@ -2409,7 +2431,7 @@ fn notify_session(state: &State, change: sessions::Change) {
             let watching = only_away && looking_at(state, &change.session, &change.app);
             if !too_quick && !watching {
                 let body = reply.unwrap_or_else(|| "Ready for your next message.".into());
-                notify_to(state, &format!("{project} is done"), &body, on_click);
+                notify_about(state, &change.session, &format!("{project} is done"), &body, on_click);
             }
         }
         _ => {}
@@ -2518,7 +2540,47 @@ fn held_requests(state: &State) -> Vec<Value> {
         return vec![];
     }
     let extra = hooks::extra_time();
-    state.sessions.lock().unwrap().held(hold_time(state), &extra)
+    let held = state.sessions.lock().unwrap().held(hold_time(state), &extra);
+    with_icons(state, held, "session")
+}
+
+/// A session's icon (see icons.rs), or none for one Headroom doesn't know.
+fn icon_of(state: &State, session: &str) -> Option<Value> {
+    let (chat, cwd) = state.sessions.lock().unwrap().icon_key(session)?;
+    Some(state.icons.lock().unwrap().of(&chat, &cwd))
+}
+
+/// The same rows, each with its session's icon, the session's ID being under `key`.
+fn with_icons(state: &State, mut rows: Vec<Value>, key: &str) -> Vec<Value> {
+    for row in &mut rows {
+        if let Some(icon) = row[key].as_str().and_then(|id| icon_of(state, id)) {
+            row["icon"] = icon;
+        }
+    }
+    rows
+}
+
+/// Give a session's chat an icon, or every chat in its folder with `whole_project`. `None` puts back the one it had to
+/// start with.
+#[tauri::command]
+fn set_icon(
+    session: String,
+    icon: Option<Value>,
+    whole_project: bool,
+    state: tauri::State<Arc<State>>,
+) -> Result<(), String> {
+    if icon.as_ref().is_some_and(|i| !icons::valid(i)) {
+        return Err("That can't be an icon".into());
+    }
+    let (chat, cwd, others) = {
+        let sessions = state.sessions.lock().unwrap();
+        let (chat, cwd) = sessions.icon_key(&session).ok_or("Headroom doesn't know that chat any more")?;
+        let others = sessions.chats_in(&cwd);
+        (chat, cwd, others)
+    };
+    state.icons.lock().unwrap().set(&chat, &cwd, icon, whole_project, &others);
+    changed(&state);
+    Ok(())
 }
 
 /// Answer a held request from the popover or Settings: "allow", "session" or "deny" for a permission request,
@@ -2748,7 +2810,8 @@ fn pending(state: &State) -> Vec<Value> {
         return vec![];
     }
     let extra = hooks::extra_time();
-    let mut rows = state.sessions.lock().unwrap().pending(hold_time(state), &extra);
+    let rows = state.sessions.lock().unwrap().pending(hold_time(state), &extra);
+    let mut rows = with_icons(state, rows, "id");
     let processes = rows.iter().any(|r| r["state"] == "working").then(processes).unwrap_or_default();
     for row in &mut rows {
         let id = row["id"].as_str().unwrap_or_default().to_string();
@@ -2951,6 +3014,7 @@ fn build_limit<M: Manager<Wry>>(app: &M, config_dir: &Path, info: LimitInfo) -> 
 /// Build the menu and the menu bar item, and return the state shared with the refresh loop.
 fn build_state(app: &tauri::App) -> tauri::Result<State> {
     let config_dir = app.path().app_config_dir()?;
+    let icons = icons::Icons::load(&config_dir);
 
     // If there's no saved interval, or it's no longer one of the options in `INTERVALS`, we'll use the default. Same
     // idea for what the menu bar shows.
@@ -3116,6 +3180,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         paused: Mutex::new(paused),
         list_mode: Mutex::new(false),
         told_front: Mutex::new(None),
+        icons: Mutex::new(icons),
         today: Mutex::new(Today::default()),
         resets: Mutex::new([None, None]),
         update_item,
@@ -3198,6 +3263,7 @@ fn main() {
             pending_sessions,
             send_to_session,
             stop_step,
+            set_icon,
             mark_seen,
             open_pending,
             popover_cards,

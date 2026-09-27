@@ -105,6 +105,8 @@ When you've got a few Claude Code sessions going, the one that needs you is rare
 
 Turn on **Hooks** in Settings and a yellow dot in the menu bar counts the sessions that need an answer, and a blue one counts the ones that are done. Headroom can send a notification for either.
 
+Each chat gets an icon of its own, an emoji to start with, so you can tell at a glance which one wants you: in the list, on its cards, and at the front of its notifications. Click it to pick another emoji or a picture from your Mac, for that chat or every chat in the same project.
+
 With **Approve from the menu bar** on as well, when a session asks for permission, a panel drops down from the icon with what it wants to do, full command and all. Answer it right there with **Allow** or **Deny** (or **Allow for Session**, when Claude Code offers it), or in the terminal like before. Whichever you get to first wins. If a few pile up, they stack, and you can flip or swipe through them.
 
 <p align="center">

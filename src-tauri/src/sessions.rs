@@ -482,6 +482,7 @@ impl Sessions {
                 let project = project_name(&session.cwd);
                 let mut ask = json!({
                     "id": id,
+                    "session": held.session,
                     "title": session.title.clone().unwrap_or_else(|| project.clone()),
                     "project": project,
                     "until": until.timestamp_millis(),
@@ -517,6 +518,17 @@ impl Sessions {
             .collect();
         list.sort_by_key(|(since, _)| *since);
         list.into_iter().map(|(_, ask)| ask).collect()
+    }
+
+    /// What a session's icon is kept under (see icons.rs): its chat in the Claude app, or itself, and its folder.
+    pub fn icon_key(&self, id: &str) -> Option<(String, String)> {
+        let s = self.sessions.get(id)?;
+        Some((s.host_chat.clone().unwrap_or_else(|| id.to_string()), s.cwd.clone()))
+    }
+
+    /// The icon keys of the sessions in a folder.
+    pub fn chats_in(&self, cwd: &str) -> Vec<String> {
+        self.sessions.keys().filter_map(|id| self.icon_key(id).filter(|(_, c)| c == cwd).map(|(key, _)| key)).collect()
     }
 
     /// The process that last ran one of a session's hooks (see hooks.rs `keep`).

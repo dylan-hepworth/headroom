@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Pending } from "./Pending";
+import type { ChatIcon } from "./Avatar";
 import type { Ask } from "./Popover";
 
 export const inApp = "__TAURI_INTERNALS__" in window;
@@ -40,6 +41,8 @@ export const yourTurn = (s: Session) => s.state === "waiting";
 export type Session = {
   id: string;
   project: string;
+  /** Its chat's icon (see Avatar.tsx). */
+  icon?: ChatIcon;
   /** The chat's title, as the Claude app shows it in its list of chats. */
   title?: string | null;
   path: string;
@@ -166,6 +169,7 @@ export const bridge = inApp
       sendToSession: (session: string, text: string) => invoke("send_to_session", { session, text }),
       stopStep: (session: string) => invoke("stop_step", { session }),
       markSeen: (sessions: string[]) => invoke("mark_seen", { sessions }),
+      setIcon: (session: string, icon: ChatIcon | null, wholeProject: boolean) => invoke("set_icon", { session, icon, wholeProject }),
       popoverCards: () => invoke("popover_cards"),
       /** The user's writing a reply in the list, which stays down meanwhile. */
       saveToken: (token: string) => invoke("save_token", { token }),
@@ -209,6 +213,7 @@ function mockBridge() {
     sendToSession: async (_session: string, _text: string) => {},
     stopStep: async (_session: string) => {},
     markSeen: async (_sessions: string[]) => {},
+    setIcon: async (_session: string, _icon: ChatIcon | null, _wholeProject: boolean) => {},
     popoverCards: async () => {},
     saveAttachment: async (_data: string) =>
       "/Users/you/Library/Application Support/io.github.dylan-hepworth.headroom/attachments/2026-09-26-194512-0.png",
@@ -254,6 +259,7 @@ const mock: AppState = {
   sessions: [
     {
       id: "a1",
+      icon: { emoji: "🚀" },
       project: "headroom",
       title: "Settings window polish",
       path: "~/Code/headroom",
@@ -264,6 +270,7 @@ const mock: AppState = {
     },
     {
       id: "b2",
+      icon: { emoji: "🦉" },
       project: "photo-sorter",
       title: "Group duplicates by capture time",
       path: "~/Code/photo-sorter",
@@ -273,6 +280,7 @@ const mock: AppState = {
     },
     {
       id: "c3",
+      icon: { emoji: "📚" },
       project: "blog",
       path: "~/Code/blog",
       state: "working",

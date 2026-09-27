@@ -15,6 +15,7 @@ import React, {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { Avatar, choosePicture, previewIcon, type ChatIcon } from "./Avatar";
 import { bridge } from "./bridge";
 import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
@@ -35,6 +36,8 @@ export type Ask =
       hold: number;
       /** Does the session run in the Claude app? Then it goes back to its chat, not a terminal. */
       inChat?: boolean;
+      /** The chat's icon, to tell it apart at a glance. */
+      icon?: ChatIcon;
     }
   | {
       kind: "question";
@@ -46,6 +49,7 @@ export type Ask =
       until: number;
       hold: number;
       inChat?: boolean;
+      icon?: ChatIcon;
       /** Hands-free: what Claude said this turn, what the user last said to it, and what's gone on lately, to read
        *  before answering. */
       said?: string;
@@ -264,7 +268,12 @@ function Header({ ask, glyph }: { ask: Ask; glyph: ReactNode }) {
   const left = useLeft(ask.until);
   return (
     <div className="ask-head">
-      <Badge glyph={glyph} urgent={!paused && left < RED_ZONE * ask.hold} />
+      {/* The chat's icon, with the kind of request on its corner, or without one, just that */}
+      {ask.icon ? (
+        <Avatar icon={ask.icon} size={34} corner={<Badge glyph={glyph} urgent={!paused && left < RED_ZONE * ask.hold} />} />
+      ) : (
+        <Badge glyph={glyph} urgent={!paused && left < RED_ZONE * ask.hold} />
+      )}
       <div className="ask-head-text">
         <div className="ask-title" title={ask.title}>
           {ask.title}
@@ -495,7 +504,11 @@ function CompactHeader({ ask, glyph, onExpand, onClose }: { ask: Ask; glyph: Rea
   const urgent = !paused && left < RED_ZONE * ask.hold;
   return (
     <div className="compact-top">
-      <span className={ask.kind === "question" ? "compact-glyph" : "compact-glyph permission"}>{glyph}</span>
+      {ask.icon ? (
+        <Avatar icon={ask.icon} size={20} />
+      ) : (
+        <span className={ask.kind === "question" ? "compact-glyph" : "compact-glyph permission"}>{glyph}</span>
+      )}
       <span className="compact-title" title={ask.title}>
         {ask.title}
       </span>
@@ -1541,6 +1554,18 @@ export function PopoverWindow() {
           items={pending}
           arrow={arrow}
           onReplying={(replying) => (writing.current = replying)}
+          onIcon={async (item, icon, wholeProject) => {
+            let picked: ChatIcon | null = null;
+            if (icon === "picture") {
+              // Choosing a file takes the window's focus, which would otherwise put the list away
+              writing.current = true;
+              picked = await choosePicture().finally(() => (writing.current = false));
+              if (!picked) return;
+            } else picked = icon;
+            await bridge.setIcon(item.id, picked, wholeProject);
+            const rows = await bridge.pendingSessions();
+            setPending((now) => (now ? rows : now));
+          }}
           onSeen={async (items) => {
             await bridge.markSeen(items.map((item) => item.id));
             const rows = await bridge.pendingSessions();
@@ -1592,6 +1617,15 @@ export function PopoverWindow() {
 }
 
 /** The popover in a plain browser, under a stand-in menu bar, on made-up requests. Open with `?popover`. */
+/** A picture for a chat's icon, in the previews: a little landscape. */
+export const PREVIEW_PICTURE: ChatIcon = {
+  image:
+    "data:image/svg+xml," +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><defs><linearGradient id="s" x2="0" y2="1"><stop offset="0" stop-color="#f7b58a"/><stop offset="1" stop-color="#e98b6d"/></linearGradient></defs><rect width="40" height="40" fill="url(#s)"/><circle cx="29" cy="12" r="5" fill="#fff4d6"/><path d="M0 30l11-11 9 9 6-5 14 12v5H0z" fill="#3f6b4f"/><path d="M0 34l14-8 10 6 16-5v13H0z" fill="#2f5540"/></svg>',
+    ),
+};
+
 export function PopoverPreview() {
   const now = Date.now();
   const [asks, setAsks] = useState<Ask[]>([
@@ -1697,7 +1731,7 @@ export function PopoverPreview() {
       {open && (
         <Popover
           compact={location.search.includes("compact")}
-          asks={asks}
+          asks={location.search.includes("icons") ? asks.map((a, i) => ({ ...a, icon: i === 1 ? PREVIEW_PICTURE : previewIcon(a.title) })) : asks}
           style={place && { right: place.right }}
           arrow={place?.arrow}
           onAnswer={async (id) => setAsks((list) => list.filter((a) => a.id !== id))}

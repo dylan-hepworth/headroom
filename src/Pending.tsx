@@ -5,8 +5,9 @@
 // `npm run ui`, then add `?pending` to the address, to see it on made-up conversations.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Avatar, previewIcon, IconPicker, type ChatIcon } from "./Avatar";
 import { MarkdownSnippet } from "./markdown";
-import { OtherAnswer, outline, useSize } from "./Popover";
+import { OtherAnswer, outline, PREVIEW_PICTURE, useSize } from "./Popover";
 import { Ring } from "./ui";
 import "./popover.css";
 
@@ -30,6 +31,8 @@ export type Pending = {
   queued?: boolean;
   /** At work on a command, which can be stopped so a waiting message goes in now. */
   canStop?: boolean;
+  /** The chat's icon, to tell it apart at a glance. */
+  icon?: ChatIcon;
 };
 
 const STATE: Record<Pending["state"], string> = {
@@ -62,6 +65,7 @@ function Row({
   onReplying,
   onStop,
   onSeen,
+  onIcon,
 }: {
   item: Pending;
   onOpen: () => void;
@@ -70,7 +74,11 @@ function Row({
   onReplying?: (replying: boolean) => void;
   onStop: () => Promise<unknown>;
   onSeen: () => void;
+  /** A new icon for it (null to go back to the one it started with), for it or every chat in its project, or a picture
+   *  to choose for it. */
+  onIcon?: (icon: ChatIcon | "picture" | null, wholeProject: boolean) => void;
 }) {
+  const [picking, setPicking] = useState(false);
   // A working session is interjected rather than replied to: the message waits for its next step
   const working = item.state === "working";
   const [replying, setReplyingState] = useState(false);
@@ -114,7 +122,16 @@ function Row({
   return (
     <li className={replying ? "pending-row replying" : "pending-row"}>
       <div className="pending-main" onClick={() => !replying && (item.heldId ? onAnswer() : onOpen())}>
-        <i className={waiting ? "count-dot answer" : working ? "count-dot working" : "count-dot turn"} />
+        {item.icon ? (
+          <Avatar
+            icon={item.icon}
+            corner={<i className={waiting ? "count-dot answer" : working ? "count-dot working" : "count-dot turn"} />}
+            onClick={onIcon && (() => setPicking(!picking))}
+            title="Change its icon"
+          />
+        ) : (
+          <i className={waiting ? "count-dot answer" : working ? "count-dot working" : "count-dot turn"} />
+        )}
         <div className="pending-text">
           <div className="pending-top">
             <span className="pending-title">{item.title}</span>
@@ -133,6 +150,24 @@ function Row({
           {problem && !replying && <div className="ask-problem">{problem}</div>}
         </div>
       </div>
+      {picking && item.icon && onIcon && (
+        <IconPicker
+          icon={item.icon}
+          project={item.project}
+          onPick={(icon, whole) => {
+            onIcon(icon, whole);
+            setPicking(false);
+          }}
+          onPicture={(whole) => {
+            onIcon("picture", whole);
+            setPicking(false);
+          }}
+          onReset={() => {
+            onIcon(null, false);
+            setPicking(false);
+          }}
+        />
+      )}
       {replying ? (
         <div
           className="pending-reply"
@@ -219,6 +254,7 @@ export function PendingList({
   onReplying,
   onStop,
   onSeen,
+  onIcon,
 }: {
   items: Pending[];
   arrow?: number;
@@ -231,6 +267,7 @@ export function PendingList({
   onStop: (item: Pending) => Promise<unknown>;
   /** Finished chats the user's seen, to take off the list. */
   onSeen: (items: Pending[]) => void;
+  onIcon?: (item: Pending, icon: ChatIcon | "picture" | null, wholeProject: boolean) => void;
 }) {
   const { ref, width, height } = useSize();
   const path = width ? outline(width, height, width - arrow) : "";
@@ -249,6 +286,7 @@ export function PendingList({
       onReplying={onReplying}
       onStop={() => onStop(item)}
       onSeen={() => onSeen([item])}
+      onIcon={onIcon && ((icon, whole) => onIcon(item, icon, whole))}
     />
   );
   return (
@@ -354,6 +392,11 @@ export function PendingPreview() {
     ).filter((i) => !location.search.includes("working") || i.state === "working"),
   );
   const [note, setNote] = useState("");
+  // `?icons` gives each chat its icon, one of them a picture
+  const icons = location.search.includes("icons");
+  useEffect(() => {
+    if (icons) setItems((list) => list.map((x, i) => ({ ...x, icon: i === 2 ? PREVIEW_PICTURE : previewIcon(x.title) })));
+  }, []);
 
   // A click on the item opens and closes it, as does ⎋ and a click anywhere else
   const [open, setOpen] = useState(false);
@@ -409,6 +452,15 @@ export function PendingPreview() {
           arrow={place?.arrow}
           onOpen={(i) => setNote(`Opens “${i.title}” ${i.inChat ? "in Claude" : "in its terminal"}`)}
           onAnswer={(i) => setNote(`Shows “${i.title}” on its card, to answer`)}
+          onIcon={
+            icons
+              ? (i, icon, whole) => {
+                  const next = icon === "picture" ? PREVIEW_PICTURE : (icon ?? previewIcon(i.title));
+                  setNote(icon === "picture" ? "Opens a file picker for a picture" : whole ? `Uses it for every chat in ${i.project}` : "");
+                  setItems((list) => list.map((x) => (x.id === i.id || (whole && x.project === i.project) ? { ...x, icon: next } : x)));
+                }
+              : undefined
+          }
           onSeen={(seen) => {
             setNote(seen.length > 1 ? "Marks every finished chat as seen" : `Marks “${seen[0].title}” as seen`);
             setItems((list) => list.filter((x) => !seen.some((s) => s.id === x.id)));
@@ -429,6 +481,30 @@ export function PendingPreview() {
         />
       )}
       {note && <div className="pending-note">{note}</div>}
+      {icons && (
+        // Notifications as they'd come in, for the mockup: macOS puts the app's icon first, so a chat's emoji leads
+        // its title, and its picture goes beside the text
+        <div className="stage-notifications">
+          {items
+            .filter((i) => i.state !== "working")
+            .slice(0, 3)
+            .map((i) => (
+              <div className="stage-notification" key={i.id}>
+                <span className="stage-app-icon">
+                  <Ring pct={71} size={20} stroke={3} />
+                </span>
+                <div>
+                  <b>
+                    {i.icon && "emoji" in i.icon ? `${i.icon.emoji} ` : ""}
+                    {i.title}
+                  </b>
+                  <div>{i.state === "done" ? i.what : i.state === "question" ? `Has a question: ${i.what}` : `Wants to run ${i.what}`}</div>
+                </div>
+                {i.icon && "image" in i.icon && <img className="stage-notification-image" src={i.icon.image} alt="" />}
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

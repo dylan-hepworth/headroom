@@ -20,7 +20,8 @@ use objc2::{
 };
 use objc2_foundation::{NSArray, NSError, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions,
+    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationAttachment,
+    UNNotificationPresentationOptions,
     UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
     UNUserNotificationCenterDelegate,
 };
@@ -121,11 +122,22 @@ pub fn ask() {
     );
 }
 
-/// Send a notification. `id` is how it's known later, to take it away or to handle a click on it.
-pub fn send(id: &str, title: &str, body: &str) {
+/// Send a notification. `id` is how it's known later, to take it away or to handle a click on it. A `picture` shows
+/// beside the text; macOS takes the file into its own store.
+pub fn send(id: &str, title: &str, body: &str, picture: Option<&std::path::Path>) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
+    if let Some(path) = picture {
+        let url = objc2_foundation::NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        // SAFETY: a file URL to a picture Headroom just wrote, and no options
+        let attachment = unsafe {
+            UNNotificationAttachment::attachmentWithIdentifier_URL_options_error(&NSString::from_str("icon"), &url, None)
+        };
+        if let Ok(attachment) = attachment {
+            content.setAttachments(&NSArray::from_retained_slice(&[attachment]));
+        }
+    }
     content.setSound(Some(&UNNotificationSound::defaultSound()));
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(id), &content, None);
     UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, None);

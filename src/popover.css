@@ -2,7 +2,8 @@
  * the top, a hairline edge that runs unbroken into the arrow, and a soft shadow, in the system's light or dark
  * appearance. */
 
-.popover-wrap {
+.popover-wrap,
+.pop-vars {
   --pop-bg: rgba(248, 246, 242, 0.72);
   --pop-bg-solid: rgba(246, 243, 238, 0.98);
   --pop-edge: rgba(0, 0, 0, 0.13);
@@ -25,7 +26,8 @@
   --pop-accent-2: #c9603c;
   --pop-green: #30b45a;
   --pop-red: #e5484d;
-
+}
+.popover-wrap {
   position: relative;
   width: 404px;
   color: var(--pop-text);
@@ -67,7 +69,8 @@ html:not(.popover-page) .popover-fade.closing.dissolved {
   display: none;
 }
 @media (prefers-color-scheme: dark) {
-  .popover-wrap {
+  .popover-wrap,
+  .pop-vars {
     --pop-bg: rgba(20, 18, 16, 0.82);
     --pop-bg-solid: rgba(24, 22, 20, 0.98);
     --pop-edge: rgba(255, 255, 255, 0.16);
@@ -1418,4 +1421,171 @@ html.popover-page .popover-window {
 .compact-command:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A chat's icon (see Avatar.tsx) */
+.avatar {
+  all: unset;
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: 28%;
+  background: var(--pop-card-solid, var(--card));
+  box-shadow:
+    inset 0 0 0 0.5px var(--pop-card-edge, var(--card-edge)),
+    0 1px 3px rgba(0, 0, 0, 0.08);
+  line-height: 1;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.avatar-emoji {
+  transform: translateY(0.02em);
+}
+.avatar.pickable {
+  cursor: pointer;
+}
+.avatar.pickable:hover {
+  box-shadow:
+    inset 0 0 0 1.5px var(--pop-accent, #df7a4f),
+    0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.avatar-corner {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  font-size: 0;
+}
+.avatar-corner .count-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px var(--pop-bg-solid);
+}
+/* The kind of request, small, on the corner of a card's icon */
+.avatar-corner .ask-badge {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  box-shadow: 0 0 0 2px var(--pop-card-solid);
+}
+.avatar-corner .ask-badge svg {
+  width: 10px;
+  height: 10px;
+}
+.pending-main .avatar {
+  margin-top: 1px;
+}
+
+.icon-picker {
+  margin: 8px 0 2px 36px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--pop-card-solid);
+  box-shadow:
+    inset 0 0 0 0.5px var(--pop-card-edge),
+    0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+.icon-picker-emoji {
+  all: unset;
+  display: grid;
+  place-items: center;
+  height: 30px;
+  border-radius: 7px;
+  font-size: 18px;
+  cursor: pointer;
+}
+.icon-picker-emoji:hover {
+  background: var(--pop-fill);
+}
+.icon-picker-emoji.picked {
+  background: color-mix(in srgb, var(--pop-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--pop-accent);
+}
+.icon-picker-foot {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.icon-picker-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--pop-text-2);
+  font-size: 12px;
+}
+
+.stage-notifications {
+  position: absolute;
+  top: 34px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stage-notification {
+  display: flex;
+  gap: 10px;
+  width: 330px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: rgba(20, 16, 12, 0.85);
+  background: rgba(246, 243, 238, 0.85);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.stage-notification > div {
+  flex: 1;
+  min-width: 0;
+}
+.stage-app-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #fbf7f2;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+.stage-app-icon .ring {
+  color: #d97757;
+}
+.stage-notification-image {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+}
+.stage-notification > div > div {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(20, 16, 12, 0.62);
+}
+@media (prefers-color-scheme: dark) {
+  .stage-notification {
+    color: rgba(255, 250, 244, 0.92);
+    background: rgba(40, 36, 32, 0.82);
+  }
+  .stage-notification > div > div {
+    color: rgba(255, 250, 244, 0.6);
+  }
 }
