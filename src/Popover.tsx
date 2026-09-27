@@ -1522,18 +1522,35 @@ export function PopoverWindow() {
     return () => clearInterval(timer);
   }, [watching]);
 
-  // The list opens on a click, like a menu, and goes like one: clicking somewhere else, or ⎋
+  // The list opens on a click, like a menu, and goes like one: going to another app, or ⎋. Going to another of
+  // Headroom's windows, like the planner, it stays, and goes once Headroom isn't the app in front any more.
+  const open_ = !!pending;
   useEffect(() => {
-    if (!pending) return;
-    const blur = () => !writing.current && bridge.closePopover();
+    if (!open_) return;
+    let watch: number | undefined;
+    const check = () =>
+      bridge.headroomInFront().then((ours) => {
+        if (writing.current || document.hasFocus()) return;
+        if (!ours) bridge.closePopover();
+        else if (watch === undefined) watch = window.setInterval(check, 500);
+      });
+    // The app only knows which one's in front a moment after the focus moves
+    const blur = () => window.setTimeout(check, 120);
+    const focus = () => {
+      window.clearInterval(watch);
+      watch = undefined;
+    };
     const key = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && bridge.closePopover();
     window.addEventListener("blur", blur);
+    window.addEventListener("focus", focus);
     window.addEventListener("keydown", key);
     return () => {
+      window.clearInterval(watch);
       window.removeEventListener("blur", blur);
+      window.removeEventListener("focus", focus);
       window.removeEventListener("keydown", key);
     };
-  }, [pending]);
+  }, [open_]);
 
   // Keep the window the height of the panel and the room below it for its shadow
   const box = useRef<HTMLDivElement>(null);

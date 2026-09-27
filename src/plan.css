@@ -517,7 +517,8 @@ html.browser body:has(.planner) {
   flex: none;
 }
 .ask-btn.delete {
-  align-self: flex-start;
+  align-self: stretch;
+  justify-content: center;
   color: var(--pop-red);
 }
 .inspector .inspector-delete-room {

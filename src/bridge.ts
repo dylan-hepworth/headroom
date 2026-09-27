@@ -177,6 +177,7 @@ export const bridge = inApp
       savePlan: (plan: Plan) => invoke("save_plan", { plan }),
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       openPlanner: () => invoke("open_planner_now"),
+      headroomInFront: () => invoke<boolean>("headroom_in_front"),
       popoverCards: () => invoke("popover_cards"),
       /** The user's writing a reply in the list, which stays down meanwhile. */
       saveToken: (token: string) => invoke("save_token", { token }),
@@ -225,6 +226,7 @@ function mockBridge() {
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
     openPlanner: async () => {},
+    headroomInFront: async () => false,
     emojiNames: async (): Promise<[string, string][]> => [
       ["🦊", "fox"],
       ["🐙", "octopus"],

@@ -1633,6 +1633,13 @@ fn in_dock_while_open(app: &AppHandle, w: &tauri::WebviewWindow) {
     });
 }
 
+/// Is Headroom the app in front? The list of chats goes like a menu when the user goes somewhere else, but not when
+/// that's one of Headroom's own windows, like the planner.
+#[tauri::command]
+fn headroom_in_front() -> bool {
+    frontmost_app().as_deref() == Some("io.github.dylan-hepworth.headroom")
+}
+
 /// Open the agent planner (see Planner.tsx), or bring it forward.
 fn open_planner(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("planner") {
@@ -1806,7 +1813,8 @@ fn hide_popover(app: &AppHandle) {
                     let had_keyboard = window.is_focused().unwrap_or(false);
                     let _ = window.hide();
                     with_ns_window(&window, |w| w.setAlphaValue(1.0));
-                    if had_keyboard && app.get_webview_window("settings").is_none() {
+                    // Unless one of Headroom's windows is open, which the user may be going back to
+                    if had_keyboard && DOCK_WINDOWS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                         let _ = app.hide();
                     }
                 });
@@ -2826,6 +2834,10 @@ fn sync_popover_now(state: &State) {
 /// itself. A right click always opens the menu.
 fn tray_clicked(tray: &TrayIcon, event: tauri::tray::TrayIconEvent) {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+    // A right click opens the menu, which the panel would sit over
+    if let TrayIconEvent::Click { button: MouseButton::Right, button_state: MouseButtonState::Down, .. } = event {
+        return close_popover(tray.app_handle().clone());
+    }
     let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event else {
         return;
     };
@@ -3339,6 +3351,7 @@ fn main() {
             save_plan,
             delete_plan,
             open_planner_now,
+            headroom_in_front,
             emoji_names,
             mark_seen,
             open_pending,
