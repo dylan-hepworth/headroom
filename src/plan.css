@@ -60,14 +60,86 @@
   height: 640px;
 }
 
+/* The grid, which scrolls, zooms (the content's scaled, and the stage under it is the scaled size, so there's room to
+   scroll to all of it), and pans with the space bar held */
+.grid-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
 .grid-canvas {
   position: relative;
+  flex: 1;
   overflow: auto;
   background-color: var(--pop-card-solid);
   background-image: radial-gradient(circle, var(--pop-card-edge-strong) 1px, transparent 1.2px);
   background-size: 20px 20px;
+  background-attachment: local;
   touch-action: none;
   user-select: none;
+}
+.grid-canvas.panning,
+.grid-canvas.panning * {
+  cursor: grab !important;
+}
+.grid-canvas.grabbing,
+.grid-canvas.grabbing * {
+  cursor: grabbing !important;
+}
+.grid-stage {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+.grid-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+.grid-marquee {
+  position: absolute;
+  border: 1px solid var(--pop-accent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--pop-accent) 10%, transparent);
+  pointer-events: none;
+}
+.grid-zoom {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: var(--pop-bg-solid);
+  box-shadow:
+    0 0 0 0.5px var(--pop-edge),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.grid-zoom button {
+  all: unset;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  text-align: center;
+  color: var(--pop-text-2);
+  cursor: pointer;
+}
+.grid-zoom button:hover:not(:disabled) {
+  color: var(--pop-text);
+  background: var(--pop-fill);
+}
+.grid-zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.grid-zoom .grid-zoom-level {
+  min-width: 38px;
+  font-variant-numeric: tabular-nums;
 }
 .grid-wires {
   position: absolute;
@@ -103,12 +175,14 @@
 }
 /* Centered on the loop's curve, so it's plainly that loop's, and a click on it picks the arrow like the curve does */
 .loop-tag-box {
+  pointer-events: none;
   display: flex;
   justify-content: center;
   align-items: center;
   height: 100%;
 }
 .loop-tag {
+  pointer-events: auto;
   cursor: pointer;
   white-space: nowrap;
   padding: 3px 8px;

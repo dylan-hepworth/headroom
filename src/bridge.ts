@@ -210,6 +210,8 @@ export const bridge = inApp
       savePlan: (plan: Plan) => invoke("save_plan", { plan }),
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       /** Open the planner, following the team at work on `plan` if there's one. */
+      /** Save a team to a file the user picks; false if they cancel. */
+      exportPlan: (name: string, text: string) => invoke<boolean>("export_plan", { name, text }),
       openPlanner: (plan?: string) => invoke("open_planner_now", { plan: plan ?? null }),
       onPlannerFollow: (then: (plan: string) => void) => listen<string>("planner-follow", (e) => then(e.payload)),
       lastMessage: (session: string) => invoke<string | null>("last_message", { session }),
@@ -387,6 +389,14 @@ function mockBridge() {
     plans: async (): Promise<Plan[]> => [myCompany as Plan],
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
+    // In a browser, it downloads
+    exportPlan: async (name: string, text: string) => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      link.download = `${name}.json`;
+      link.click();
+      return true;
+    },
     openPlanner: async (_plan?: string) => {},
     onPlannerFollow: async (_then: (plan: string) => void) => () => {},
     lastChat: async (): Promise<string | null> => "c3",

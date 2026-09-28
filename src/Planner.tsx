@@ -259,11 +259,31 @@ export function launch(plan: Plan, work: string): { lead: string; managers: Laun
   return { lead: lines.join("\n"), managers: specs };
 }
 
+/** How far the grid can be zoomed out and in. */
+const ZOOM = { min: 0.3, max: 2 };
+
+/** The zoom the planner was left at, for the next time it's open. */
+function savedZoom() {
+  try {
+    return Math.min(ZOOM.max, Math.max(ZOOM.min, Number(localStorage.getItem("planner-zoom")) || 1));
+  } catch {
+    return 1;
+  }
+}
+
+/** What a drag on the grid is doing: panning it, moving agents, or drawing a box to pick the agents inside. */
+type Gesture =
+  | { kind: "pan"; x: number; y: number; left: number; top: number }
+  | { kind: "move"; x: number; y: number; from: Record<string, { x: number; y: number }> }
+  | { kind: "box"; x: number; y: number; add: string[] };
+
 export function Canvas({
   agents,
   edges,
   selected,
+  group = [],
   onSelect,
+  onGroup,
   onMove,
   onConnect,
   live,
@@ -272,8 +292,13 @@ export function Canvas({
   agents: Agent[];
   edges: Edge[];
   selected: string | null;
+  /** The agents picked together, when it's more than one */
+  group?: string[];
   onSelect: (id: string | null) => void;
-  onMove?: (id: string, x: number, y: number) => void;
+  /** Pick these agents together */
+  onGroup?: (ids: string[]) => void;
+  /** Agents dragged somewhere, by ID */
+  onMove?: (moves: Record<string, { x: number; y: number }>) => void;
   onConnect?: (from: string, to: string) => void;
   /** While it runs, how each agent's getting on (see Running.tsx) */
   live?: Record<string, { status: string; doing: string }>;
@@ -281,103 +306,284 @@ export function Canvas({
   rounds?: Record<string, number>;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const [wire, setWire] = useState<{ from: string; x: number; y: number } | null>(null);
+  const gesture = useRef<Gesture | null>(null);
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [grabbing, setGrabbing] = useState(false);
+  // Held down, the space bar turns a drag into panning, the way it does in design apps
+  const [space, setSpace] = useState(false);
+
+  const [zoom, setZoomNow] = useState(savedZoom);
+  const scale = useRef(zoom);
+  scale.current = zoom;
+  /** Zoom to `next`, keeping the point at (cx, cy) in the view where it is: the pointer's, or the middle. */
+  const zoomTo = (next: number, cx?: number, cy?: number) => {
+    const el = box.current;
+    if (!el) return;
+    const to = Math.min(ZOOM.max, Math.max(ZOOM.min, next));
+    const [px, py] = [cx ?? el.clientWidth / 2, cy ?? el.clientHeight / 2];
+    const [gx, gy] = [(el.scrollLeft + px) / scale.current, (el.scrollTop + py) / scale.current];
+    scale.current = to;
+    setZoomNow(to);
+    try {
+      localStorage.setItem("planner-zoom", String(to));
+    } catch {
+      // Not kept for next time, which is fine
+    }
+    requestAnimationFrame(() => {
+      el.scrollLeft = gx * to - px;
+      el.scrollTop = gy * to - py;
+    });
+  };
+  const zoomer = useRef(zoomTo);
+  zoomer.current = zoomTo;
+
+  useEffect(() => {
+    const el = box.current!;
+    const inBox = (e: { clientX: number; clientY: number }) => {
+      const r = el.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top] as const;
+    };
+    // A pinch on the trackpad comes as a wheel with ⌃ held, or as a gesture; ⌘ with the wheel zooms too
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomer.current(scale.current * Math.exp(-e.deltaY * 0.01), ...inBox(e));
+    };
+    let base = 1;
+    const pinchStart = (e: Event) => {
+      e.preventDefault();
+      base = scale.current;
+    };
+    const pinch = (e: Event) => {
+      e.preventDefault();
+      const g = e as Event & { scale: number; clientX: number; clientY: number };
+      zoomer.current(base * g.scale, ...inBox(g));
+    };
+    const typing = (e: KeyboardEvent) => !!(e.target as Element).closest?.("input, textarea, [contenteditable]");
+    const down = (e: KeyboardEvent) => {
+      if (e.metaKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        zoomer.current(scale.current * 1.25);
+      } else if (e.metaKey && e.key === "-") {
+        e.preventDefault();
+        zoomer.current(scale.current / 1.25);
+      } else if (e.metaKey && e.key === "0") {
+        e.preventDefault();
+        zoomer.current(1);
+      } else if (e.key === " " && !typing(e)) {
+        e.preventDefault();
+        setSpace(true);
+      }
+    };
+    const up = (e: KeyboardEvent) => e.key === " " && setSpace(false);
+    const away = () => setSpace(false);
+    el.addEventListener("wheel", wheel, { passive: false });
+    el.addEventListener("gesturestart", pinchStart);
+    el.addEventListener("gesturechange", pinch);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", away);
+    return () => {
+      el.removeEventListener("wheel", wheel);
+      el.removeEventListener("gesturestart", pinchStart);
+      el.removeEventListener("gesturechange", pinch);
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", away);
+    };
+  }, []);
+
+  /** Where the pointer is on the grid, in the plan's own units, whatever the zoom and scroll. */
   const at = (e: React.PointerEvent) => {
-    const r = box.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left + box.current!.scrollLeft, y: e.clientY - r.top + box.current!.scrollTop };
+    const el = box.current!;
+    const r = el.getBoundingClientRect();
+    return { x: (e.clientX - r.left + el.scrollLeft) / zoom, y: (e.clientY - r.top + el.scrollTop) / zoom };
   };
   const byId = (id: string) => agents.find((n) => n.id === id);
   const width = Math.max(...agents.map((a) => a.x + W), 0) + 200;
   const height = Math.max(...agents.map((a) => a.y + H), 0) + 200;
+  const isBackground = (t: EventTarget) =>
+    t === box.current || ["grid-stage", "grid-content", "grid-wires"].some((c) => (t as Element).classList?.contains(c));
+  const inside = (m: NonNullable<typeof marquee>) => {
+    const [left, right, top, bottom] = [Math.min(m.x0, m.x1), Math.max(m.x0, m.x1), Math.min(m.y0, m.y1), Math.max(m.y0, m.y1)];
+    return agents.filter((n) => n.x < right && n.x + W > left && n.y < bottom && n.y + H > top).map((n) => n.id);
+  };
+  const picked = (id: string) => selected === id || group.includes(id);
+
   return (
-    <div
-      className="grid-canvas"
-      ref={box}
-      onPointerMove={(e) => {
-        const p = at(e);
-        if (drag && onMove) onMove(drag.id, Math.max(0, snap(p.x - drag.dx)), Math.max(0, snap(p.y - drag.dy)));
-        if (wire) setWire({ ...wire, ...p });
-      }}
-      onPointerUp={(e) => {
-        if (wire && onConnect) {
+    <div className="grid-wrap">
+      <div
+        className={["grid-canvas", space && "panning", grabbing && "grabbing"].filter(Boolean).join(" ")}
+        ref={box}
+        style={{ backgroundSize: `${20 * zoom}px ${20 * zoom}px` }}
+        onPointerDown={(e) => {
+          const el = box.current!;
+          if (space || e.button === 1) {
+            e.preventDefault();
+            gesture.current = { kind: "pan", x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+            setGrabbing(true);
+            el.setPointerCapture(e.pointerId);
+            return;
+          }
+          if (!isBackground(e.target)) return;
+          if (!onGroup || !onMove) return onSelect(null);
           const p = at(e);
-          const onto = agents.find((n) => p.x >= n.x && p.x <= n.x + W && p.y >= n.y && p.y <= n.y + H);
-          if (onto && onto.id !== wire.from) onConnect(wire.from, onto.id);
-        }
-        setDrag(null);
-        setWire(null);
-      }}
-      onPointerDown={(e) => (e.target === e.currentTarget || (e.target as Element).classList.contains("grid-wires")) && onSelect(null)}
-    >
-      <svg className="grid-wires" width={width} height={height}>
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0 1L9 5L0 9z" />
-          </marker>
-        </defs>
-        {edges.map((e) => {
-          const [a, b] = [byId(e.from), byId(e.to)];
-          if (!a || !b) return null;
-          return (
-            <g key={edgeId(e)} className={selected === edgeId(e) ? "wire selected" : "wire"} onPointerDown={() => onSelect(edgeId(e))}>
-              <path className="wire-hit" d={path(a, b)} />
-              <path d={path(a, b)} markerEnd="url(#arrow)" />
-              {e.loop && (
-                <>
-                  <path className="wire-hit" d={loopPath(a, b)} />
-                  <path className="wire-loop" d={loopPath(a, b)} markerEnd="url(#arrow)" />
-                  <foreignObject x={loopMiddle(a, b).x - 110} y={loopMiddle(a, b).y - 15} width={220} height={30}>
-                    <div className="loop-tag-box">
-                      <div className="loop-tag">
-                        {rounds?.[edgeId(e)] ? `↻ round ${rounds[edgeId(e)]} of ${e.loop.rounds}` : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}
-                      </div>
-                    </div>
-                  </foreignObject>
-                </>
-              )}
-            </g>
-          );
-        })}
-        {wire && byId(wire.from) && (
-          <path className="wire drawing" d={`M${byId(wire.from)!.x + W / 2} ${byId(wire.from)!.y + H} L${wire.x} ${wire.y}`} />
-        )}
-      </svg>
-      {agents.map((n) => (
-        <div
-          key={n.id}
-          className={["grid-node", n.role.toLowerCase(), live?.[n.id]?.status, selected === n.id && "selected"].filter(Boolean).join(" ")}
-          style={{ left: n.x, top: n.y, width: W, height: H }}
-          onPointerDown={(e) => {
+          const already = group.length ? group : selected && byId(selected) ? [selected] : [];
+          gesture.current = { kind: "box", ...p, add: e.shiftKey ? already : [] };
+          setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+          el.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const g = gesture.current;
+          const p = at(e);
+          if (wire) setWire({ ...wire, ...p });
+          if (!g) return;
+          if (g.kind === "pan") {
+            box.current!.scrollLeft = g.left - (e.clientX - g.x);
+            box.current!.scrollTop = g.top - (e.clientY - g.y);
+          } else if (g.kind === "move" && onMove) {
+            const [dx, dy] = [snap(p.x - g.x), snap(p.y - g.y)];
+            onMove(Object.fromEntries(Object.entries(g.from).map(([id, f]) => [id, { x: Math.max(0, f.x + dx), y: Math.max(0, f.y + dy) }])));
+          } else if (g.kind === "box" && marquee && onGroup) {
+            const next = { ...marquee, x1: p.x, y1: p.y };
+            setMarquee(next);
+            onGroup([...new Set([...g.add, ...inside(next)])]);
+          }
+        }}
+        onPointerUp={(e) => {
+          if (wire && onConnect) {
             const p = at(e);
-            if (onMove) setDrag({ id: n.id, dx: p.x - n.x, dy: p.y - n.y });
-            onSelect(n.id);
-          }}
-        >
-          <Avatar icon={n.icon} size={28} corner={live && <i className={`plan-dot ${live[n.id]?.status}`} />} />
-          <div className="grid-node-text">
-            <b>{n.name}</b>
-            {live ? (
-              <span className="grid-doing">{live[n.id]?.doing}</span>
-            ) : (
-              <>
-                <span className={`model ${n.model.toLowerCase()}`}>{n.model}</span>
-                {n.until && <span className="until">↻ until {n.until}</span>}
-              </>
+            const onto = agents.find((n) => p.x >= n.x && p.x <= n.x + W && p.y >= n.y && p.y <= n.y + H);
+            if (onto && onto.id !== wire.from) onConnect(wire.from, onto.id);
+          }
+          // A click on the grid, rather than a drag across it, lets go of what's picked
+          const g = gesture.current;
+          if (g?.kind === "box" && marquee && !g.add.length && Math.hypot(marquee.x1 - marquee.x0, marquee.y1 - marquee.y0) < 4) onSelect(null);
+          gesture.current = null;
+          setWire(null);
+          setMarquee(null);
+          setGrabbing(false);
+        }}
+      >
+        <div className="grid-stage" style={{ width: width * zoom, height: height * zoom }}>
+          <div className="grid-content" style={{ width, height, transform: `scale(${zoom})` }}>
+            <svg className="grid-wires" width={width} height={height}>
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0 1L9 5L0 9z" />
+                </marker>
+              </defs>
+              {edges.map((e) => {
+                const [a, b] = [byId(e.from), byId(e.to)];
+                if (!a || !b) return null;
+                return (
+                  <g
+                    key={edgeId(e)}
+                    className={selected === edgeId(e) ? "wire selected" : "wire"}
+                    onPointerDown={(ev) => !space && (ev.stopPropagation(), onSelect(edgeId(e)))}
+                  >
+                    <path className="wire-hit" d={path(a, b)} />
+                    <path d={path(a, b)} markerEnd="url(#arrow)" />
+                    {e.loop && (
+                      <>
+                        <path className="wire-hit" d={loopPath(a, b)} />
+                        <path className="wire-loop" d={loopPath(a, b)} markerEnd="url(#arrow)" />
+                        {/* Wide enough for a long "until": the tag sits in the middle of it */}
+                        <foreignObject x={loopMiddle(a, b).x - 240} y={loopMiddle(a, b).y - 15} width={480} height={30}>
+                          <div className="loop-tag-box">
+                            <div className="loop-tag">
+                              {rounds?.[edgeId(e)]
+                                ? `↻ round ${rounds[edgeId(e)]} of ${e.loop.rounds}`
+                                : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}
+                            </div>
+                          </div>
+                        </foreignObject>
+                      </>
+                    )}
+                  </g>
+                );
+              })}
+              {wire && byId(wire.from) && (
+                <path className="wire drawing" d={`M${byId(wire.from)!.x + W / 2} ${byId(wire.from)!.y + H} L${wire.x} ${wire.y}`} />
+              )}
+            </svg>
+            {agents.map((n) => (
+              <div
+                key={n.id}
+                className={["grid-node", n.role.toLowerCase(), live?.[n.id]?.status, picked(n.id) && "selected"].filter(Boolean).join(" ")}
+                style={{ left: n.x, top: n.y, width: W, height: H }}
+                onPointerDown={(e) => {
+                  // Panning, the grid has it
+                  if (space || e.button === 1) return;
+                  e.stopPropagation();
+                  // ⇧-click adds it to what's picked, or takes it out
+                  if (e.shiftKey && onGroup) {
+                    const already = group.length ? group : selected && byId(selected) ? [selected] : [];
+                    onGroup(already.includes(n.id) ? already.filter((id) => id !== n.id) : [...already, n.id]);
+                    return;
+                  }
+                  const moving = group.includes(n.id) ? group : [n.id];
+                  if (!group.includes(n.id)) onSelect(n.id);
+                  if (onMove) {
+                    const p = at(e);
+                    const from = Object.fromEntries(moving.map((id) => [id, { x: byId(id)!.x, y: byId(id)!.y }]));
+                    gesture.current = { kind: "move", ...p, from };
+                    box.current!.setPointerCapture(e.pointerId);
+                  }
+                }}
+              >
+                <Avatar icon={n.icon} size={28} corner={live && <i className={`plan-dot ${live[n.id]?.status}`} />} />
+                <div className="grid-node-text">
+                  <b>{n.name}</b>
+                  {live ? (
+                    <span className="grid-doing">{live[n.id]?.doing}</span>
+                  ) : (
+                    <>
+                      <span className={`model ${n.model.toLowerCase()}`}>{n.model}</span>
+                      {n.until && <span className="until">↻ until {n.until}</span>}
+                    </>
+                  )}
+                </div>
+                {onConnect && (
+                  <span
+                    className="grid-port"
+                    title="Drag onto another agent to hand it work"
+                    onPointerDown={(e) => {
+                      if (space) return;
+                      e.stopPropagation();
+                      setWire({ from: n.id, ...at(e) });
+                      box.current!.setPointerCapture(e.pointerId);
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+            {marquee && (
+              <div
+                className="grid-marquee"
+                style={{
+                  left: Math.min(marquee.x0, marquee.x1),
+                  top: Math.min(marquee.y0, marquee.y1),
+                  width: Math.abs(marquee.x1 - marquee.x0),
+                  height: Math.abs(marquee.y1 - marquee.y0),
+                }}
+              />
             )}
           </div>
-          {onConnect && (
-            <span
-              className="grid-port"
-              title="Drag onto another agent to hand it work"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                setWire({ from: n.id, ...at(e) });
-              }}
-            />
-          )}
         </div>
-      ))}
+      </div>
+      <div className="grid-zoom">
+        <button onClick={() => zoomTo(zoom / 1.25)} title="Zoom Out (⌘−)" disabled={zoom <= ZOOM.min}>
+          −
+        </button>
+        <button className="grid-zoom-level" onClick={() => zoomTo(1)} title="Actual Size (⌘0)">
+          {Math.round(zoom * 100)}%
+        </button>
+        <button onClick={() => zoomTo(zoom * 1.25)} title="Zoom In (⌘+)" disabled={zoom >= ZOOM.max}>
+          +
+        </button>
+      </div>
     </div>
   );
 }
@@ -400,6 +606,30 @@ function loopPath(a: Agent, b: Agent) {
 function loopMiddle(a: Agent, b: Agent) {
   const out = Math.min(a.x, b.x) - 44;
   return { x: (b.x + 6 * out + a.x) / 8, y: (a.y + b.y + H) / 2 };
+}
+
+/** Several agents picked together: their model, all at once, and deleting them. */
+function GroupInspector({ agents, onAgents, onDelete }: { agents: Agent[]; onAgents: (agents: Agent[]) => void; onDelete: () => void }) {
+  const model = agents.every((a) => a.model === agents[0].model) ? agents[0].model : null;
+  return (
+    <div className="inspector">
+      <div className="inspector-title">{agents.length} agents</div>
+      <div className="inspector-sub">{list(agents.map((a) => a.name))}</div>
+      <div className="inspector-label">Model</div>
+      <div className="segmented">
+        {MODELS.map((m) => (
+          <button key={m} className={model === m ? "on" : ""} onClick={() => onAgents(agents.map((a) => ({ ...a, model: m })))}>
+            {m}
+          </button>
+        ))}
+      </div>
+      <div className="inspector-hint loop-hint">Drag any of them to move them all. ⇧-click an agent to add it or take it out.</div>
+      <span className="inspector-delete-room" />
+      <button className="ask-btn delete" onClick={onDelete} title="Their arrows go with them">
+        Delete {agents.length} Agents <kbd>⌫</kbd>
+      </button>
+    </div>
+  );
 }
 
 function Inspector({
@@ -692,6 +922,86 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
 let made = 0;
 const newId = () => `a${Date.now().toString(36)}${made++}`;
 
+/** A team as a file, for another Mac or another person: what it's called, its agents, and its arrows. */
+const exportText = (plan: Plan) =>
+  JSON.stringify({ kind: "headroom-team", version: 1, plan: { name: plan.name, agents: plan.agents, edges: plan.edges } }, null, 2);
+
+/** A team from a file exported from Headroom, checked over and made one of this Mac's own, with a name none of
+ *  `taken` has. Or, if it can't be read, why. Only what the planner knows goes in, so a file can't sneak in tools. */
+export function readPlan(text: string, taken: string[]): Plan | string {
+  const unreadable = "That file isn't a team exported from Headroom.";
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return unreadable;
+  }
+  const file = data as { kind?: unknown; plan?: { name?: unknown; agents?: unknown; edges?: unknown } };
+  const p = file?.kind === "headroom-team" ? file.plan : undefined;
+  if (!p || !Array.isArray(p.agents) || !Array.isArray(p.edges) || !p.agents.length) return unreadable;
+  const words = (v: unknown, max = 4000) => (typeof v === "string" ? v.slice(0, max) : "");
+  const number = (v: unknown) => (typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(20000, Math.round(v))) : 0);
+  const icon = (v: unknown): ChatIcon => {
+    const i = v as { emoji?: unknown; image?: unknown };
+    if (typeof i?.emoji === "string" && i.emoji.length <= 16) return { emoji: i.emoji };
+    if (typeof i?.image === "string" && i.image.startsWith("data:image/") && i.image.length < 300_000) return { image: i.image };
+    return { emoji: "🐝" };
+  };
+  const agents: Agent[] = [];
+  for (const raw of p.agents as Record<string, unknown>[]) {
+    const role = raw?.role as Role;
+    const model = raw?.model as Model;
+    if (typeof raw?.id !== "string" || !(["Lead", "Manager", "Worker"] as Role[]).includes(role) || !MODELS.includes(model)) {
+      return "One of the team's agents isn't set up in a way Headroom can read.";
+    }
+    if (agents.some((a) => a.id === raw.id)) return "Two of the team's agents are the same one.";
+    agents.push({
+      id: raw.id,
+      name: words(raw.name, 80) || "Agent",
+      icon: icon(raw.icon),
+      model,
+      role,
+      x: number(raw.x),
+      y: number(raw.y),
+      brief: words(raw.brief),
+      commands: Array.isArray(raw.commands) ? raw.commands.filter((c): c is string => typeof c === "string").map((c) => c.slice(0, 80)) : [],
+      tools: Array.isArray(raw.tools) ? TOOLS.filter((t) => (raw.tools as unknown[]).includes(t)) : [],
+      ...(typeof raw.until === "string" ? { until: words(raw.until, 200) } : {}),
+    });
+  }
+  const known = (id: unknown) => agents.some((a) => a.id === id);
+  const edges: Edge[] = [];
+  for (const raw of p.edges as Record<string, unknown>[]) {
+    if (!known(raw?.from) || !known(raw?.to) || raw.from === raw.to) continue;
+    const loop = raw.loop as { until?: unknown; rounds?: unknown } | undefined;
+    const rounds = typeof loop?.rounds === "number" ? Math.max(1, Math.min(10, Math.round(loop.rounds))) : 0;
+    edges.push({
+      from: raw.from as string,
+      to: raw.to as string,
+      ...(rounds ? { loop: { until: words(loop!.until, 200) || "approved", rounds } } : {}),
+    });
+  }
+  let name = words(p.name, 80).trim() || "Imported team";
+  for (let n = 2; taken.includes(name); n++) name = `${words(p.name, 80).trim() || "Imported team"} ${n}`;
+  return { id: newId(), name, agents, edges };
+}
+
+/** A file the user picks, as text, or null if they don't pick one. */
+function chooseFile(accept: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return resolve(null);
+      file.text().then(resolve, () => resolve(null));
+    };
+    input.addEventListener("cancel", () => resolve(null));
+    input.click();
+  });
+}
+
 /** "just now", "5m ago", "3h ago", "2d ago" */
 function ago(ms?: number) {
   if (!ms) return "";
@@ -716,7 +1026,17 @@ export function PlannerWindow() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [saved, setSaved] = useState(true);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelectedNow] = useState<string | null>(null);
+  // Agents picked together, by a box drawn round them, ⇧-clicks, or ⌘A: two or more, or none
+  const [group, setGroupNow] = useState<string[]>([]);
+  const setSelected = (id: string | null) => {
+    setSelectedNow(id);
+    setGroupNow([]);
+  };
+  const setGroup = (ids: string[]) => {
+    setGroupNow(ids.length > 1 ? ids : []);
+    setSelectedNow(ids.length === 1 ? ids[0] : null);
+  };
   const [opening, setOpening] = useState(false);
   const [starting, setStarting] = useState(false);
   // Saving as a new version, with its name
@@ -782,6 +1102,24 @@ export function PlannerWindow() {
     if (saved) return then();
     setUnsaved({ then, doing });
   };
+  // Why an import or export didn't work, until the next one
+  const [problem, setProblem] = useState("");
+  /** A team from a file: saved as one of this Mac's, and opened. */
+  const importPlan = async () => {
+    setOpening(false);
+    setProblem("");
+    const text = await chooseFile(".json,application/json");
+    if (text === null) return;
+    const read = readPlan(
+      text,
+      plans.map((p) => p.name),
+    );
+    if (typeof read === "string") return setProblem(read);
+    leave(`importing ${read.name}`, () => {
+      store(read);
+      setSelected(null);
+    });
+  };
   const open = (p: Plan) =>
     leave(`opening ${p.name}`, () => {
       setPlan(p);
@@ -814,16 +1152,22 @@ export function PlannerWindow() {
       else setOpening(!opening);
       return;
     }
-    if (e.key !== "Backspace" && e.key !== "Delete") return;
     // Following a team, the grid's the plan as it started, which isn't for editing
     if (watching || (e.target as Element).closest("input, textarea")) return;
-    remove();
+    if (e.metaKey && key === "a" && plan) {
+      e.preventDefault();
+      setGroup(plan.agents.map((a) => a.id));
+    } else if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      remove();
+    }
   };
   // The agent or arrow that's picked, and an agent's arrows with it
   const remove = () => {
-    if (!plan || !selected) return;
-    const agents = plan.agents.filter((a) => a.id !== selected);
-    const edges = plan.edges.filter((x) => edgeId(x) !== selected && x.from !== selected && x.to !== selected);
+    const going = group.length ? group : selected ? [selected] : [];
+    if (!plan || !going.length) return;
+    const agents = plan.agents.filter((a) => !going.includes(a.id));
+    const edges = plan.edges.filter((x) => !going.includes(edgeId(x)) && !going.includes(x.from) && !going.includes(x.to));
     change({ ...plan, agents, edges });
     setSelected(null);
   };
@@ -898,6 +1242,18 @@ export function PlannerWindow() {
                     )}
                   </div>
                 ))}
+              <hr />
+              <button onClick={importPlan}>Import…</button>
+              <button
+                onClick={() => {
+                  setOpening(false);
+                  bridge
+                    .exportPlan(plan.name, exportText(plan))
+                    .catch((e) => setProblem(`Couldn't export it: ${e instanceof Error ? e.message : String(e)}`));
+                }}
+              >
+                Export {plan.name}…
+              </button>
             </div>
           )}
         </div>
@@ -945,6 +1301,7 @@ export function PlannerWindow() {
             </button>
           </div>
         ))}
+      {problem && <div className="plan-issues">{problem}</div>}
       {issues.length > 0 && !watching && <div className="plan-issues">{issues.join(" ")}</div>}
       {run && live ? (
         <div className="plan-body">
@@ -957,20 +1314,30 @@ export function PlannerWindow() {
             agents={plan.agents}
             edges={plan.edges}
             selected={selected}
+            group={group}
             onSelect={setSelected}
-            onMove={(id, x, y) => change({ ...plan, agents: plan.agents.map((a) => (a.id === id ? { ...a, x, y } : a)) })}
+            onGroup={setGroup}
+            onMove={(moves) => change({ ...plan, agents: plan.agents.map((a) => (moves[a.id] ? { ...a, ...moves[a.id] } : a)) })}
             onConnect={(from, to) => {
               if (plan.edges.some((e) => e.from === from && e.to === to) || makesCircle(plan.edges, from, to)) return;
               change({ ...plan, edges: [...plan.edges, { from, to }] });
             }}
           />
-          <Inspector
-            plan={plan}
-            selected={selected}
-            onAgent={setAgent}
-            onEdge={(e) => change({ ...plan, edges: plan.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
-            onDelete={remove}
-          />
+          {group.length ? (
+            <GroupInspector
+              agents={plan.agents.filter((a) => group.includes(a.id))}
+              onAgents={(changed) => change({ ...plan, agents: plan.agents.map((a) => changed.find((c) => c.id === a.id) ?? a) })}
+              onDelete={remove}
+            />
+          ) : (
+            <Inspector
+              plan={plan}
+              selected={selected}
+              onAgent={setAgent}
+              onEdge={(e) => change({ ...plan, edges: plan.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
+              onDelete={remove}
+            />
+          )}
         </div>
       )}
       {starting && <StartSheet plan={plan} onClose={() => setStarting(false)} />}

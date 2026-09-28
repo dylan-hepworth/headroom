@@ -27,7 +27,7 @@ objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCen
 block2 = "0.6"
 objc2-speech = { version = "0.3", features = ["SFSpeechRecognizer", "SFSpeechRecognitionRequest", "SFSpeechRecognitionTask", "SFSpeechRecognitionResult", "SFTranscription", "block2"] }
 objc2-avf-audio = { version = "0.3", features = ["AVAudioEngine", "AVAudioNode", "AVAudioIONode", "AVAudioBuffer", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "block2"] }
-objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSToolbar", "NSResponder", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSFont", "NSColor", "NSAttributedString", "NSWorkspace", "NSRunningApplication", "NSScreen", "NSGraphics"] }
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSToolbar", "NSResponder", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSFont", "NSColor", "NSAttributedString", "NSWorkspace", "NSRunningApplication", "NSScreen", "NSGraphics", "NSPanel", "NSSavePanel"] }
 
 [profile.release]
 strip = true

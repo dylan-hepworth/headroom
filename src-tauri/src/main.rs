@@ -1737,6 +1737,28 @@ fn open_planner(app: &AppHandle, follow: Option<&str>) {
     let _ = w.set_focus();
 }
 
+/// Save a team from the planner to a file the user picks, for another Mac or another person to import. Returns
+/// whether it was saved, rather than the user cancelling. On the main thread, as a command that isn't async is.
+#[tauri::command]
+fn export_plan(name: String, text: String) -> Result<bool, String> {
+    use objc2_app_kit::NSSavePanel;
+    use objc2_foundation::NSString;
+    serde_json::from_str::<Value>(&text).map_err(|_| "That team couldn't be written out")?;
+    let mtm = objc2::MainThreadMarker::new().ok_or("Headroom couldn't show where to save it")?;
+    let panel = NSSavePanel::savePanel(mtm);
+    // A file's name can't have a slash in it
+    let file = format!("{}.json", name.replace(['/', ':'], "-"));
+    panel.setNameFieldStringValue(&NSString::from_str(&file));
+    panel.setCanCreateDirectories(true);
+    const OK: isize = 1;
+    if panel.runModal() != OK {
+        return Ok(false);
+    }
+    let path = panel.URL().and_then(|url| url.path()).ok_or("Headroom couldn't tell where that is")?;
+    std::fs::write(path.to_string(), text).map_err(|e| format!("Couldn't save it there: {e}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn open_planner_now(app: AppHandle, plan: Option<String>) {
     open_planner(&app, plan.as_deref());
@@ -3689,6 +3711,7 @@ fn main() {
             teams,
             message_manager,
             clear_team,
+            export_plan,
             headroom_in_front,
             last_chat,
             emoji_names,

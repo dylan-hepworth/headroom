@@ -204,7 +204,9 @@ macOS asks once to let Headroom use the microphone and speech recognition.
   </picture>
 </p>
 
-**Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. While they work, the planner follows them on the same grid: what each agent's doing, the round each loop's on, each manager's report as it comes in, and a box to message the Lead or a manager. Stop them all from there, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart.
+**Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. While they work, the planner follows them on the same grid: what each agent's doing, the round each loop's on, each manager's report as it comes in, and a box to message the Lead or a manager. Stop them all from there, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart. **Export…** and **Import…**, in the same menu, pass a team along as a file.
+
+The grid zooms with a pinch, ⌘+ and ⌘−, or the buttons in its corner, and pans with a scroll, or a drag with the space bar held. Drag across it to pick several agents (or ⇧-click them, or ⌘A), then drag any of them to move them all, give them all one model, or delete them together.
 
 The managers' work counts toward your usage like any other Claude Code session.
 
