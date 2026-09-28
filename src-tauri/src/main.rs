@@ -1887,10 +1887,12 @@ fn stop_teams(state: &State, run: Option<&str>) {
 #[tauri::command]
 fn teams(state: tauri::State<Arc<State>>) -> Value {
     let mut runs = state.teams.lock().unwrap().to_json();
+    let can_message = messages_go_in(&state);
     // With what the hooks have said: how the lead's getting on, and what each manager and its workers are doing
     let sessions = state.sessions.lock().unwrap();
     for run in runs.as_array_mut().into_iter().flatten() {
         run["leadState"] = run["lead"].as_str().and_then(|id| sessions.state_of(id)).unwrap_or_default();
+        run["canMessage"] = can_message.into();
         for m in run["members"].as_array_mut().into_iter().flatten() {
             let live = m["session"].as_str().and_then(|id| sessions.manager(id));
             m["live"] = live.map(|m| m.to_json()).unwrap_or_default();
@@ -2615,6 +2617,15 @@ fn set_setting(key: String, value: Value, state: tauri::State<Arc<State>>) -> Re
         _ => return Err(bad()),
     }
     Ok(())
+}
+
+/// Whether a message for a session at work goes in after its current step: only when Claude Code waits for the hook
+/// after each tool call, which it does as `install_hooks` sets things up.
+fn messages_go_in(state: &State) -> bool {
+    let note = state.near_limit.lock().unwrap().for_hooks();
+    let (approvals, _) = *state.approvals.lock().unwrap();
+    let hands_free = *state.ask_next.lock().unwrap() && *state.hands_free.lock().unwrap();
+    *state.hooks_on.lock().unwrap() && ((note.near.is_some() && note.right_away) || (approvals && hands_free))
 }
 
 /// Write our hooks into ~/.claude/settings.json as the settings stand now: which ones Claude Code waits for depends on

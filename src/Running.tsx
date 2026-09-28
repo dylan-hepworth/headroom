@@ -250,7 +250,13 @@ export function LivePanel({ run, selected }: { run: TeamRun; selected: string | 
           </div>
         </>
       )}
-      {hears && (
+      {hears && !run.canMessage && (
+        <div className="inspector-hint loop-hint">
+          To message the Lead or a manager while it works, turn on Hands-free in Settings → Hooks. Claude Code then checks for messages after each
+          step.
+        </div>
+      )}
+      {hears && run.canMessage && (
         <>
           <div className="inspector-label">Message {agent.name}</div>
           <SpokenField className="inspector-field" rows={3} value={text} onChange={setText} placeholder={`Tell ${agent.name} something`} />

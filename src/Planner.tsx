@@ -737,6 +737,7 @@ export function PlannerWindow() {
   const [editing, setEditing] = useState<string | null>(null);
   const watching = !!run && editing !== run.id;
   const live = run && watching ? liveOf(run) : undefined;
+  const busy = !!run?.members.some((m) => m.state === "working");
   useEffect(() => {
     bridge.plans().then((all) => {
       setPlans(all);
@@ -909,7 +910,8 @@ export function PlannerWindow() {
         </button>
         <button
           className="ask-btn primary"
-          disabled={issues.length > 0 && !plan.agents.some((a) => a.role === "Lead")}
+          disabled={(issues.length > 0 && !plan.agents.some((a) => a.role === "Lead")) || busy}
+          title={busy ? "This team's already at work. Stop it first to start it again." : undefined}
           onClick={() => setStarting(true)}
         >
           Add to a Chat…
@@ -917,7 +919,7 @@ export function PlannerWindow() {
       </div>
       {run && <RunBar run={run} watching={watching} onWatch={(watch) => setEditing(watch ? null : run.id)} onStopped={loadRuns} />}
       {runs
-        .filter((r) => r.plan.id !== plan.id && r.members.some((m) => m.state === "working"))
+        .filter((r) => r.id !== run?.id && r.members.some((m) => m.state === "working"))
         .map((r) => (
           <div key={r.id} className="plan-running">
             <span className="plan-dot working" />

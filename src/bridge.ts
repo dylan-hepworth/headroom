@@ -81,6 +81,8 @@ export type TeamRun = {
   name: string;
   lead: string;
   started: number;
+  /** Whether a message for the lead or a manager at work goes in after its current step (see `messages_go_in`) */
+  canMessage: boolean;
   /** How the lead's chat is getting on */
   leadState: { state: "working" | "needs-you" | "done"; doing: string | null; title: string } | null;
   members: {
@@ -243,6 +245,7 @@ function mockRun(): TeamRun {
     name: "My company",
     lead: "c3",
     started: Date.now() - 18 * 60_000,
+    canMessage: true,
     leadState: { state: "done", doing: "Handed the launch to the team.", title: "Launch the sign-in redesign" },
     members: [
       {

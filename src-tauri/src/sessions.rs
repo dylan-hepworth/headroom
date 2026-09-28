@@ -156,6 +156,8 @@ struct Worker {
     finished: u32,
     /// What it said back the last time it finished
     said: Option<String>,
+    /// When it last finished, in milliseconds: a step logged after that by a slow hook is from before
+    back: i64,
 }
 
 /// How many of a worker's steps the planner shows.
@@ -170,8 +172,13 @@ impl Manager {
             self.hook_parent = Some(pid);
         }
         let tool_ran = matches!(name, "PostToolUse" | "PostToolUseFailure");
+        let at = event["at"].as_i64().unwrap_or_default();
         if let Some(key) = event["worker"].as_str() {
             let worker = self.workers.entry(key.to_string()).or_default();
+            // Hooks run on their own, so its last step can reach the log after its work came back
+            if at < worker.back {
+                return;
+            }
             worker.working = true;
             if tool_ran {
                 let step = activity(tool, detail);
@@ -191,6 +198,7 @@ impl Manager {
                 worker.working = false;
                 worker.finished += 1;
                 worker.said = event["said"].as_str().map(String::from);
+                worker.back = at;
                 self.activity = None;
             }
             return;
@@ -1005,6 +1013,25 @@ mod tests {
 
     fn status(sessions: &Sessions) -> Status {
         sessions.sessions["s1"].status
+    }
+
+    #[test]
+    fn a_workers_step_logged_after_its_work_came_back_doesnt_restart_it() {
+        let mut sessions = Sessions::default();
+        let team = |name: &str, extra: Value| {
+            let mut e = event(name, extra);
+            e["team"] = json!("team-1:dev");
+            e
+        };
+        sessions.apply(&team("PostToolUse", json!({ "at": 1000, "tool_name": "Read", "worker": "coder" })));
+        sessions.apply(&team("PostToolUse", json!({ "at": 3000, "tool_name": "Agent", "handed": "coder" })));
+        // Its last step, from before it was done, reaches the log late
+        sessions.apply(&team("PostToolUse", json!({ "at": 2000, "tool_name": "Edit", "worker": "coder" })));
+        let manager = sessions.manager("s1").unwrap().to_json();
+        assert_eq!(manager["workers"]["coder"]["working"], false);
+        // Handed more work, it's at it again
+        sessions.apply(&team("PostToolUse", json!({ "at": 4000, "tool_name": "Edit", "worker": "coder" })));
+        assert_eq!(sessions.manager("s1").unwrap().to_json()["workers"]["coder"]["working"], true);
     }
 
     #[test]
