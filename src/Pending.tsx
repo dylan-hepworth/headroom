@@ -6,8 +6,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar, previewIcon, IconPicker, type ChatIcon } from "./Avatar";
+import { bridge, type TeamRun } from "./bridge";
 import { MarkdownSnippet } from "./markdown";
 import { OtherAnswer, outline, PREVIEW_PICTURE, useSize } from "./Popover";
+import { TeamBar } from "./Running";
 import { Ring } from "./ui";
 import "./popover.css";
 
@@ -66,8 +68,11 @@ function Row({
   onStop,
   onSeen,
   onIcon,
+  team,
 }: {
   item: Pending;
+  /** A team from the planner at work on this chat, which it leads */
+  team?: TeamRun;
   onOpen: () => void;
   onAnswer: () => void;
   onReply: (text: string, images: string[]) => Promise<unknown>;
@@ -138,10 +143,11 @@ function Row({
             <span className="pending-ago">{ago(item.since)}</span>
           </div>
           <div className="pending-sub">
-            {item.project} · {STATE[item.state]}
+            {item.project} · {item.state === "done" && team?.members.some((m) => m.state === "working") ? "Its team's at work" : STATE[item.state]}
           </div>
           {/* Claude's words, in Markdown, but not a command or what it's doing */}
           <div className="pending-what">{item.state === "done" || item.state === "question" ? <MarkdownSnippet text={item.what} /> : item.what}</div>
+          {team && <TeamBar run={team} onOpen={() => bridge.openPlanner(team.plan.id)} />}
           {item.queued && (
             <div className="pending-sent">
               {working ? "Sent. Claude sees it after its current step." : "It finished first, so your message goes with your next one."}
@@ -271,6 +277,14 @@ export function PendingList({
 }) {
   const { ref, width, height } = useSize();
   const path = width ? outline(width, height, width - arrow) : "";
+  // Teams from the planner, shown on the rows of the chats they're working for
+  const [runs, setRuns] = useState<TeamRun[]>([]);
+  useEffect(() => {
+    const load = () => bridge.teams().then(setRuns);
+    load();
+    const timer = setInterval(load, 2000);
+    return () => clearInterval(timer);
+  }, []);
   const sections: [string, Pending[]][] = [
     ["Needs you", items.filter((i) => i.state === "question" || i.state === "permission")],
     ["Working", items.filter((i) => i.state === "working")],
@@ -287,6 +301,7 @@ export function PendingList({
       onStop={() => onStop(item)}
       onSeen={() => onSeen([item])}
       onIcon={onIcon && ((icon, whole) => onIcon(item, icon, whole))}
+      team={runs.filter((r) => r.lead === item.id).at(-1)}
     />
   );
   return (
@@ -379,6 +394,21 @@ export function PendingPreview() {
           replyId: "r-c",
           inChat: true,
         },
+        // `?running`: the chat a team from the planner is at work for (see mockRun in bridge.ts)
+        ...(location.search.includes("running")
+          ? [
+              {
+                id: "lead1",
+                title: "Launch the sign-in redesign",
+                project: "web-app",
+                state: "done" as const,
+                since: now - 18 * 60_000,
+                what: "Marketing, Development, and R&D are on it. Their reports will come here as they finish.",
+                icon: { emoji: "🏢" },
+                inChat: true,
+              },
+            ]
+          : []),
         {
           id: "d",
           title: "Group duplicates by capture time",
@@ -395,7 +425,8 @@ export function PendingPreview() {
   // `?icons` gives each chat its icon, one of them a picture
   const icons = location.search.includes("icons");
   useEffect(() => {
-    if (icons) setItems((list) => list.map((x) => ({ ...x, icon: x.project === "photo-sorter" ? PREVIEW_PICTURE : previewIcon(x.title) })));
+    if (icons)
+      setItems((list) => list.map((x) => ({ ...x, icon: x.icon ?? (x.project === "photo-sorter" ? PREVIEW_PICTURE : previewIcon(x.title)) })));
   }, []);
 
   // A click on the item opens and closes it, as does ⎋ and a click anywhere else

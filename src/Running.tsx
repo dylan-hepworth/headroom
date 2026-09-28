@@ -288,3 +288,48 @@ export function LivePanel({ run, selected }: { run: TeamRun; selected: string | 
     </div>
   );
 }
+
+/** What's happening in a run, in a few words: someone who needs the user, a loop that's gone round, or what the
+ *  first one at work is doing. */
+function happening(run: TeamRun, live: Record<string, AgentLive>, rounds: Record<string, number>) {
+  const agents = run.plan.agents.filter((a) => live[a.id]?.kind !== "idle");
+  const name = (id: string) => run.plan.agents.find((a) => a.id === id)?.name ?? id;
+  const asks = agents.find((a) => live[a.id].status === "needs-you");
+  if (asks) return `${asks.name} needs you`;
+  const loop = run.plan.edges.find((e) => e.loop && (rounds[edgeId(e)] ?? 0) > 1 && live[e.from]?.status === "working");
+  if (loop) return `${name(loop.from)}'s on round ${rounds[edgeId(loop)]} of ${loop.loop!.rounds} with ${name(loop.to)}`;
+  const busy =
+    agents.find((a) => live[a.id].kind === "worker" && live[a.id].status === "working") ?? agents.find((a) => live[a.id].status === "working");
+  return busy ? `${busy.name}: ${live[busy.id].doing}` : "";
+}
+
+/** A team at work on its lead's row in the menu bar list: a segment for each agent, by how it's getting on, and a
+ *  line on what's happening. A click follows the team in the planner. */
+export function TeamBar({ run, onOpen }: { run: TeamRun; onOpen: () => void }) {
+  const { live, rounds } = liveOf(run);
+  const agents = run.plan.agents.filter((a) => live[a.id]?.kind !== "idle");
+  const order: Status[] = ["needs-you", "working", "waiting", "stopped", "failed", "done"];
+  const sorted = order.flatMap((st) => agents.filter((a) => live[a.id].status === st));
+  const done = agents.filter((a) => live[a.id].status === "done").length;
+  const now = happening(run, live, rounds);
+  return (
+    <button
+      className="team-bar-box"
+      title="Follow the team in the planner"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+    >
+      <span className="team-bar">
+        {sorted.map((a) => (
+          <i key={a.id} className={live[a.id].status} />
+        ))}
+      </span>
+      <span className="team-bar-note">
+        {running(run) ? `${run.plan.name}: ${done} of ${agents.length} done` : `${run.plan.name} is done`}
+        {running(run) && now && ` · ${now}`}
+      </span>
+    </button>
+  );
+}

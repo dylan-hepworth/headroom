@@ -738,10 +738,24 @@ export function PlannerWindow() {
   const watching = !!run && editing !== run.id;
   const live = run && watching ? liveOf(run) : undefined;
   const busy = !!run?.members.some((m) => m.state === "working");
+  // Asked, from the list, to follow a team while the planner's open
+  const follow = useRef<(id: string) => void>(() => {});
+  follow.current = (id) => {
+    const r = runs.filter((x) => x.plan.id === id).at(-1);
+    setEditing(null);
+    if (plan?.id !== id && r) open(plans.find((p) => p.id === id) ?? r.plan);
+  };
   useEffect(() => {
-    bridge.plans().then((all) => {
+    const stop = bridge.onPlannerFollow((id) => follow.current(id));
+    return () => void stop.then((f) => f());
+  }, []);
+  useEffect(() => {
+    // Opened from a team's row in the list, on the plan it's following
+    const follow = new URLSearchParams(location.search).get("follow");
+    Promise.all([bridge.plans(), bridge.teams()]).then(([all, teams]) => {
       setPlans(all);
-      setPlan(all[0] ?? blank());
+      const run = teams.filter((r) => r.plan.id === follow).at(-1);
+      setPlan(all.find((p) => p.id === follow) ?? run?.plan ?? all[0] ?? blank());
     });
   }, []);
 

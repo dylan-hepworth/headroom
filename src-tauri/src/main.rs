@@ -1703,13 +1703,24 @@ fn headroom_in_front() -> bool {
 }
 
 /// Open the agent planner (see Planner.tsx), or bring it forward.
-fn open_planner(app: &AppHandle) {
+/// Open the planner, or bring it forward. With `follow`, a plan whose team is at work: the planner opens on it,
+/// following the team.
+fn open_planner(app: &AppHandle, follow: Option<&str>) {
+    // A plan's ID is its file's name (see plans.rs), so it's safe in an address, but only one that looks like one goes
+    let follow = follow.filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     if let Some(w) = app.get_webview_window("planner") {
+        if let Some(plan) = follow {
+            let _ = w.emit("planner-follow", plan);
+        }
         let _ = w.show();
         let _ = w.set_focus();
         return;
     }
-    let Ok(w) = WebviewWindowBuilder::new(app, "planner", WebviewUrl::App("index.html?planner".into()))
+    let url = match follow {
+        Some(plan) => format!("index.html?planner&follow={plan}"),
+        None => "index.html?planner".into(),
+    };
+    let Ok(w) = WebviewWindowBuilder::new(app, "planner", WebviewUrl::App(url.into()))
         .title("Plan Agents")
         .inner_size(1280.0, 760.0)
         .min_inner_size(900.0, 560.0)
@@ -1727,8 +1738,8 @@ fn open_planner(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn open_planner_now(app: AppHandle) {
-    open_planner(&app);
+fn open_planner_now(app: AppHandle, plan: Option<String>) {
+    open_planner(&app, plan.as_deref());
 }
 
 /// Start listening, for the window that asked (see speech.rs and Voice.tsx). What's heard goes to it as "voice" events:
@@ -2208,7 +2219,7 @@ fn menu_clicked(state: Arc<State>, id: &str) {
             let _ = Command::new("open").arg(USAGE_PAGE).spawn();
         }
         "settings" => open_settings(&state.app, "general"),
-        "planner" => open_planner(&state.app),
+        "planner" => open_planner(&state.app, None),
         "show_requests" => show_popover(&state.app, true),
         "update" => update_clicked(state),
         _ => {}

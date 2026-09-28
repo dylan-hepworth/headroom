@@ -1775,3 +1775,43 @@ html.popover-page .popover-window {
   color: var(--pop-text-3);
   font-style: italic;
 }
+
+/* A team at work, on its lead's row in the menu bar list (see TeamBar in Running.tsx) */
+.team-bar-box {
+  all: unset;
+  display: block;
+  margin-top: 7px;
+  cursor: pointer;
+}
+.team-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.team-bar i {
+  flex: 1;
+  background: var(--pop-fill);
+}
+.team-bar i.working {
+  background: #d97757;
+}
+.team-bar i.needs-you {
+  background: #f5b43c;
+}
+.team-bar i.done {
+  background: #3b82f6;
+}
+.team-bar i.failed {
+  background: #e5484d;
+}
+.team-bar-note {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--pop-text-3);
+}
+.team-bar-box:hover .team-bar-note {
+  color: var(--pop-text-2);
+}
