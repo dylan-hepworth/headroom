@@ -2,7 +2,7 @@
 name = "headroom"
 description = "Claude usage in your Mac menu bar"
 license = "Apache-2.0"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 
 [build-dependencies]
