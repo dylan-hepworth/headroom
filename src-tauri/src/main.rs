@@ -395,6 +395,12 @@ struct State {
     paused: Mutex<Option<Paused>>,
     /// Hands-free: the popover is showing the list of chats, opened by clicking the menu bar item (see `tray_clicked`).
     list_mode: Mutex<bool>,
+    /// The popover's for talking to a chat, from the keyboard shortcut (see Talk.tsx). It's a kind of the list, and
+    /// goes like it.
+    talk_mode: Mutex<bool>,
+    /// The chat the user last followed: opened, answered, replied to or messaged, or clicked a notification about. What
+    /// the shortcut talks to first.
+    last_chat: Mutex<Option<String>>,
     /// The app in front, as last written for the hooks, so they hear when it changes (see hooks.rs `looked_at`).
     told_front: Mutex<Option<String>>,
     /// Each chat's icon (see icons.rs).
@@ -988,6 +994,7 @@ fn notification_clicked(app: &AppHandle, clicked: notifications::Clicked) {
         Some(OnClick::Pane(pane)) => open_settings(app, pane),
         Some(OnClick::Setting(pane, setting)) => open_settings_at(app, pane, Some(setting)),
         Some(OnClick::Session { id, app: host }) => {
+            *state.last_chat.lock().unwrap() = Some(id.clone());
             let held = held_requests(&state);
             let sessions = state.sessions.lock().unwrap();
             let waiting = held.iter().any(|r| sessions.session_of(r["id"].as_str().unwrap_or_default()) == Some(id.clone()));
@@ -1637,6 +1644,29 @@ fn in_dock_while_open(app: &AppHandle, w: &tauri::WebviewWindow) {
     });
 }
 
+/// The keyboard shortcut for talking to a chat from anywhere (see Talk.tsx): ⌃⌥Space brings the panel up listening,
+/// and again while it's up, it's for the panel to say what that means (stop listening, or send).
+fn talk_shortcut(app: &AppHandle) {
+    let state = app.state::<Arc<State>>();
+    let showing = app.get_webview_window("popover").is_some_and(|w| w.is_visible().unwrap_or(false));
+    if showing && *state.talk_mode.lock().unwrap() {
+        if let Some(w) = app.get_webview_window("popover") {
+            let _ = w.emit("talk-key", ());
+        }
+        return;
+    }
+    popover_window(app);
+    *state.list_mode.lock().unwrap() = true;
+    *state.talk_mode.lock().unwrap() = true;
+    show_popover(app, true);
+}
+
+/// The chat the user last followed, for the shortcut to talk to first.
+#[tauri::command]
+fn last_chat(state: tauri::State<Arc<State>>) -> Option<String> {
+    state.last_chat.lock().unwrap().clone()
+}
+
 /// Is Headroom the app in front? The list of chats goes like a menu when the user goes somewhere else, but not when
 /// that's one of Headroom's own windows, like the planner.
 #[tauri::command]
@@ -1931,7 +1961,13 @@ fn show_popover(app: &AppHandle, focus: bool) {
             with_ns_window(&window, |w| w.orderFrontRegardless());
         }
         // The list of chats, or the requests (see `tray_clicked`)
-        let _ = window.emit("popover-open", *handle.state::<Arc<State>>().list_mode.lock().unwrap());
+        let state = handle.state::<Arc<State>>();
+        let mode = match (*state.talk_mode.lock().unwrap(), *state.list_mode.lock().unwrap()) {
+            (true, _) => "talk",
+            (_, true) => "list",
+            _ => "cards",
+        };
+        let _ = window.emit("popover-open", mode);
     });
 }
 
@@ -2010,6 +2046,7 @@ fn popover_resize(height: f64, app: AppHandle) {
 fn close_popover(app: AppHandle) {
     let state = app.state::<Arc<State>>();
     let was_list = std::mem::take(&mut *state.list_mode.lock().unwrap());
+    *state.talk_mode.lock().unwrap() = false;
     hide_popover(&app);
     if was_list {
         LIST_CLOSED.store(Local::now().timestamp_millis(), std::sync::atomic::Ordering::Relaxed);
@@ -2864,6 +2901,9 @@ fn answer(state: &State, id: &str, choice: &str) -> Result<(), String> {
     }
     hooks::answer(id, choice)?;
     let mut sessions = state.sessions.lock().unwrap();
+    if let Some(session) = sessions.session_of(id) {
+        *state.last_chat.lock().unwrap() = Some(session);
+    }
     if choice == "terminal" {
         sessions.handed_back(id);
         drop(sessions);
@@ -3168,6 +3208,7 @@ fn mark_seen(sessions: Vec<String>, state: tauri::State<Arc<State>>) {
 /// Open a session from the list, where it runs, and put the list away.
 #[tauri::command]
 fn open_pending(session: String, state: tauri::State<Arc<State>>) {
+    *state.last_chat.lock().unwrap() = Some(session.clone());
     *state.list_mode.lock().unwrap() = false;
     // A request Headroom's holding for it goes back to its own prompt, which is what the user will find there
     let row = pending(&state).into_iter().find(|p| p["id"] == session.as_str());
@@ -3184,6 +3225,7 @@ fn open_pending(session: String, state: tauri::State<Arc<State>>) {
 /// that comes first. One that's finished, with its turn held open for a reply, gets it as the reply.
 #[tauri::command]
 fn send_to_session(session: String, text: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    *state.last_chat.lock().unwrap() = Some(session.clone());
     let row = pending(&state).into_iter().find(|p| p["id"] == session.as_str()).unwrap_or_default();
     match (row["state"].as_str(), row["replyId"].as_str()) {
         (Some("working"), _) => hooks::interject(&session, &text),
@@ -3422,6 +3464,8 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         resume_item,
         paused: Mutex::new(paused),
         list_mode: Mutex::new(false),
+        talk_mode: Mutex::new(false),
+        last_chat: Mutex::new(None),
         told_front: Mutex::new(None),
         icons: Mutex::new(icons),
         teams: Mutex::new(team::Teams::default()),
@@ -3448,6 +3492,16 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let handle = app.clone();
+                        let _ = app.run_on_main_thread(move || talk_shortcut(&handle));
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             // Run as a menu bar only app, with no Dock icon and no app menu
             #[cfg(target_os = "macos")]
@@ -3468,6 +3522,12 @@ fn main() {
                 let _ = install_hooks(&state);
             }
             tauri::async_runtime::spawn(follow_sessions(state.clone()));
+            // Talking to a chat from anywhere
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let talk = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
+                let _ = app.global_shortcut().register(talk);
+            }
             tauri::async_runtime::spawn(recap_loop(state.clone()));
 
             // Redraw the title every 30 seconds between checks so the time until reset keeps counting down
@@ -3520,6 +3580,7 @@ fn main() {
             stop_team,
             teams,
             headroom_in_front,
+            last_chat,
             emoji_names,
             mark_seen,
             open_pending,

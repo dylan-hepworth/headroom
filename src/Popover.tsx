@@ -20,6 +20,7 @@ import { MicButton, useVoice, Waveform, type Listening } from "./Voice";
 import { bridge } from "./bridge";
 import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
+import { TalkPanel } from "./Talk";
 import { Ring } from "./ui";
 import "./popover.css";
 
@@ -1491,6 +1492,7 @@ export function PopoverWindow() {
   const [pending, setPending] = useState<Pending[] | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
+  const [talking, setTalking] = useState(false);
   // A message being written in the list keeps it open when the window loses focus
   const writing = useRef(false);
   const [arrow, setArrow] = useState(60);
@@ -1517,12 +1519,13 @@ export function PopoverWindow() {
     bridge.popoverArrow().then(setArrow);
     const stops = [
       bridge.onChange(load),
-      // Opened as the list of what's waiting, or with the requests
-      bridge.onPopover("popover-open", (list) => {
+      // Opened as the list of what's waiting, for talking to a chat, or with the requests
+      bridge.onPopover("popover-open", (mode) => {
         setOpenedAt(Date.now());
         setOpen(true);
         window.dispatchEvent(new Event(SHOWN_EVENT));
-        if (list) bridge.pendingSessions().then(setPending);
+        setTalking(mode === "talk");
+        if (mode === "list") bridge.pendingSessions().then(setPending);
         else setPending(null);
         load();
       }),
@@ -1591,7 +1594,7 @@ export function PopoverWindow() {
 
   return (
     <div className="popover-window" ref={box}>
-      {pending && (
+      {pending && !talking && (
         <PendingList
           items={pending}
           arrow={arrow}
@@ -1637,8 +1640,17 @@ export function PopoverWindow() {
           }}
         />
       )}
+      {talking && (
+        <TalkPanel
+          arrow={arrow}
+          onClose={() => {
+            setTalking(false);
+            bridge.closePopover();
+          }}
+        />
+      )}
       {/* Kept while the list shows, so a half-answered card is just as it was */}
-      <div hidden={!!pending}>
+      <div hidden={!!pending || talking}>
         <Popover
           asks={asks}
           openedAt={openedAt}

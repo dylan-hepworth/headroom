@@ -173,7 +173,7 @@ export const bridge = inApp
       openNotificationSettings: () => invoke("open_notification_settings"),
       popoverArrow: () => invoke<number>("popover_arrow"),
       popoverResize: (height: number) => invoke("popover_resize", { height }),
-      onPopover: (event: "popover-open" | "popover-hide" | "popover-arrow", then: (payload: unknown) => void) =>
+      onPopover: (event: "popover-open" | "popover-hide" | "popover-arrow" | "talk-key", then: (payload: unknown) => void) =>
         listen(event, (e) => then(e.payload)),
       /** Hands-free: what's waiting on the user, for the list dropped down from the menu bar item. */
       pendingSessions: () => invoke<Pending[]>("pending_sessions"),
@@ -188,6 +188,7 @@ export const bridge = inApp
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       openPlanner: () => invoke("open_planner_now"),
       lastMessage: (session: string) => invoke<string | null>("last_message", { session }),
+      lastChat: () => invoke<string | null>("last_chat"),
       listenStart: () => invoke("listen_start"),
       listenStop: () => invoke("listen_stop"),
       listenCancel: () => invoke("listen_cancel"),
@@ -244,6 +245,7 @@ function mockBridge() {
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
     openPlanner: async () => {},
+    lastChat: async (): Promise<string | null> => null,
     listenStart: async () => {},
     listenStop: async () => {},
     listenCancel: async () => {},
