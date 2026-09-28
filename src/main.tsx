@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { PendingPreview } from "./Pending";
 import { PlanPreview } from "./PlanPreview";
+import { VoicePreview } from "./VoicePreview";
 import { PlannerWindow } from "./Planner";
 import { PopoverPreview, PopoverWindow } from "./Popover";
 import { inApp } from "./bridge";
@@ -32,7 +33,9 @@ if (!inApp) {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {location.search.includes("planner") ? (
+    {location.search.includes("voice") && !inApp ? (
+      <VoicePreview />
+    ) : location.search.includes("planner") ? (
       <PlannerWindow />
     ) : location.search.includes("plan") && !inApp ? (
       <PlanPreview />

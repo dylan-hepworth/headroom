@@ -16,6 +16,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { Avatar, choosePicture, previewIcon, type ChatIcon } from "./Avatar";
+import { MicButton, useVoice, Waveform, type Listening } from "./Voice";
 import { bridge } from "./bridge";
 import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
@@ -752,6 +753,8 @@ export function OtherAnswer({
   onAddImages,
   onSend,
   placeholder = "Your answer",
+  talk = true,
+  listening: shown,
 }: {
   placeholder?: string;
   value: string;
@@ -760,7 +763,16 @@ export function OtherAnswer({
   onImages: (images: string[]) => void;
   onAddImages: (images: string[]) => void;
   onSend: () => void;
+  /** Can it be said instead of typed (see Voice.tsx)? */
+  talk?: boolean;
+  /** For the previews: what the mic's hearing, as if it were on. */
+  listening?: Listening | null;
 }) {
+  // What's said goes after what's typed
+  const typed = useRef(value);
+  typed.current = value;
+  const voice = useVoice((said) => onChange(typed.current.trim() ? `${typed.current.trimEnd()} ${said}` : said));
+  const listening = shown ?? voice.listening;
   const field = useRef<HTMLTextAreaElement>(null);
   const [dropping, setDropping] = useState(false);
   const [problem, setProblem] = useState("");
@@ -813,6 +825,7 @@ export function OtherAnswer({
           onSend();
         }}
       />
+      {listening?.partial && <div className="ask-heard">{listening.partial}</div>}
       <div className="ask-images">
         {images.map((src, i) => (
           <span className="ask-image" key={i}>
@@ -841,6 +854,18 @@ export function OtherAnswer({
             }}
           />
         </label>
+        {voice.problem && <span className="ask-image-problem">{voice.problem}</span>}
+        {talk && (
+          <span className={listening ? "ask-talk on" : "ask-talk"}>
+            {listening && (
+              <>
+                <Waveform levels={listening.levels} />
+                <span className="ask-talk-hint">Listening…</span>
+              </>
+            )}
+            <MicButton listening={!!listening} onStart={voice.start} onStop={voice.stop} />
+          </span>
+        )}
       </div>
     </div>
   );

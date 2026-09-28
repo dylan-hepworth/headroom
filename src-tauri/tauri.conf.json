@@ -16,6 +16,7 @@
     "resources": { "icons/Assets.car": "Assets.car" },
     "macOS": {
       "minimumSystemVersion": "11.0",
+      "entitlements": "Entitlements.plist",
       "dmg": {
         "background": "icons/dmg-background.tiff",
         "windowSize": { "width": 660, "height": 500 },

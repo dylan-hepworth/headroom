@@ -29,6 +29,7 @@ mod icons;
 mod notifications;
 mod plans;
 mod sessions;
+mod speech;
 mod team;
 mod transcripts;
 mod wallpaper;
@@ -1670,6 +1671,45 @@ fn open_planner(app: &AppHandle) {
 #[tauri::command]
 fn open_planner_now(app: AppHandle) {
     open_planner(&app);
+}
+
+/// Start listening, for the window that asked (see speech.rs and Voice.tsx). What's heard goes to it as "voice" events:
+/// how loud, the words so far, and what was said, or why it couldn't be heard.
+#[tauri::command]
+fn listen_start(window: tauri::WebviewWindow) {
+    let app = window.app_handle().clone();
+    let tell = move |heard: speech::Heard| {
+        let out = match heard {
+            speech::Heard::Level(level) => json!({ "kind": "level", "level": level }),
+            speech::Heard::Words(text) => json!({ "kind": "words", "text": text }),
+            speech::Heard::Done(text) => json!({ "kind": "done", "text": text }),
+            speech::Heard::Failed(why) => json!({ "kind": "failed", "text": why }),
+        };
+        let _ = window.emit("voice", out);
+    };
+    let _ = app.clone().run_on_main_thread(move || {
+        speech::allowed(move |allowed| {
+            let tell = tell.clone();
+            let _ = app.run_on_main_thread(move || {
+                let started = allowed.and_then(|_| speech::start(tell.clone()));
+                if let Err(why) = started {
+                    tell(speech::Heard::Failed(why));
+                }
+            });
+        });
+    });
+}
+
+/// Stop listening: what was said comes as the last "voice" event.
+#[tauri::command]
+fn listen_stop(app: AppHandle) {
+    let _ = app.run_on_main_thread(speech::stop);
+}
+
+/// Stop listening, and let go of what was said.
+#[tauri::command]
+fn listen_cancel(app: AppHandle) {
+    let _ = app.run_on_main_thread(speech::cancel);
 }
 
 /// The last thing the user said in a chat, for the planner to offer as the work a team's added for.
@@ -3473,6 +3513,9 @@ fn main() {
             delete_plan,
             open_planner_now,
             last_message,
+            listen_start,
+            listen_stop,
+            listen_cancel,
             start_team,
             stop_team,
             teams,

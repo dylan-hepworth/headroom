@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Pending } from "./Pending";
 import type { ChatIcon } from "./Avatar";
+import type { Heard } from "./Voice";
 import type { Launch, Plan } from "./Planner";
 import type { Ask } from "./Popover";
 import myCompany from "./my-company.json";
@@ -187,6 +188,10 @@ export const bridge = inApp
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       openPlanner: () => invoke("open_planner_now"),
       lastMessage: (session: string) => invoke<string | null>("last_message", { session }),
+      listenStart: () => invoke("listen_start"),
+      listenStop: () => invoke("listen_stop"),
+      listenCancel: () => invoke("listen_cancel"),
+      onVoice: (then: (heard: Heard) => void) => listen<Heard>("voice", (e) => then(e.payload)),
       startTeam: (lead: string, name: string, managers: Launch[]) => invoke<string>("start_team", { lead, name, managers }),
       stopTeam: (run: string) => invoke("stop_team", { run }),
       teams: () => invoke<TeamRun[]>("teams"),
@@ -239,6 +244,10 @@ function mockBridge() {
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
     openPlanner: async () => {},
+    listenStart: async () => {},
+    listenStop: async () => {},
+    listenCancel: async () => {},
+    onVoice: async (_then: (heard: Heard) => void) => () => {},
     lastMessage: async (_session: string): Promise<string | null> =>
       "Launch the sign-in redesign: new login page, magic links, and the help docs for it.",
     startTeam: async (_lead: string, _name: string, _managers: Launch[]) => "team-1",

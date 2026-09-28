@@ -6,5 +6,9 @@
 	<string>Headroom</string>
 	<key>NSUserNotificationAlertStyle</key>
 	<string>alert</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Headroom listens while you hold or click its mic, so you can talk to Claude instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Headroom turns what you say into text for Claude, on this Mac where it can.</string>
 </dict>
 </plist>
