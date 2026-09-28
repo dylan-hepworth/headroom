@@ -395,7 +395,7 @@ export function PendingPreview() {
   // `?icons` gives each chat its icon, one of them a picture
   const icons = location.search.includes("icons");
   useEffect(() => {
-    if (icons) setItems((list) => list.map((x, i) => ({ ...x, icon: i === 2 ? PREVIEW_PICTURE : previewIcon(x.title) })));
+    if (icons) setItems((list) => list.map((x) => ({ ...x, icon: x.project === "photo-sorter" ? PREVIEW_PICTURE : previewIcon(x.title) })));
   }, []);
 
   // A click on the item opens and closes it, as does ⎋ and a click anywhere else

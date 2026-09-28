@@ -473,7 +473,7 @@ function Inspector({
         {a.role === "Lead"
           ? "The chat's own Claude. There's one Lead."
           : a.role === "Manager"
-            ? "Runs its team. For now the Lead does, with what's written here in mind."
+            ? "Runs its team as a session of its own, in the background, and reports to the Lead's chat."
             : "Runs as a subagent, with its own model."}
       </div>
       <div className="inspector-label">Model</div>

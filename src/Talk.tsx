@@ -14,7 +14,7 @@ import "./popover.css";
  *  copied, to paste in there. */
 type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes: "working" | "reply" | null };
 
-export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: () => void }) {
+export function TalkPanel({ arrow = 60, style, onClose }: { arrow?: number; style?: React.CSSProperties; onClose: () => void }) {
   const { ref, width, height } = useSize();
   const path = width ? outline(width, height, width - arrow) : "";
   const [chats, setChats] = useState<Chat[]>([]);
@@ -101,7 +101,7 @@ export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: ()
 
   const heard = voice.listening?.partial ?? "";
   return (
-    <div className="popover-fade" style={{ "--arrow-right": `${arrow}px` } as React.CSSProperties}>
+    <div className="popover-fade" style={{ ...style, "--arrow-right": `${arrow}px` } as React.CSSProperties}>
       <div className="popover-wrap" ref={ref}>
         <div className="popover-material" style={{ clipPath: path ? `path("${path}")` : undefined }}>
           <div className="popover-sheen" />
@@ -123,13 +123,16 @@ export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: ()
                 )}
               </div>
               <div className="voice-words">
-                <textarea
-                  className="talk-text"
-                  rows={1}
-                  value={text}
-                  placeholder={voice.listening ? "Listening…" : "Say something, or type it"}
-                  onChange={(e) => setText(e.target.value)}
-                />
+                {/* The words coming in take the box's place until there's something in it */}
+                {(text || !heard) && (
+                  <textarea
+                    className="talk-text"
+                    rows={1}
+                    value={text}
+                    placeholder={voice.listening ? "Listening…" : "Say something, or type it"}
+                    onChange={(e) => setText(e.target.value)}
+                  />
+                )}
                 {heard && <span className="talk-heard">{heard}</span>}
               </div>
             </div>

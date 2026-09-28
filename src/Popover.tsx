@@ -1782,17 +1782,21 @@ export function PopoverPreview() {
         </span>
         <span>Fri Sep 25 2:41 PM</span>
       </div>
-      {open && (
-        <Popover
-          compact={location.search.includes("compact")}
-          asks={location.search.includes("icons") ? asks.map((a, i) => ({ ...a, icon: i === 1 ? PREVIEW_PICTURE : previewIcon(a.title) })) : asks}
-          style={place && { right: place.right }}
-          arrow={place?.arrow}
-          onAnswer={async (id) => setAsks((list) => list.filter((a) => a.id !== id))}
-          onClose={() => setOpen(false)}
-          onExtend={extend}
-          onAttach={bridge.saveAttachment}
-        />
+      {open && location.search.includes("talk") ? (
+        <TalkPanel arrow={place?.arrow} style={place && { right: place.right }} onClose={() => setOpen(false)} />
+      ) : (
+        open && (
+          <Popover
+            compact={location.search.includes("compact")}
+            asks={location.search.includes("icons") ? asks.map((a, i) => ({ ...a, icon: i === 1 ? PREVIEW_PICTURE : previewIcon(a.title) })) : asks}
+            style={place && { right: place.right }}
+            arrow={place?.arrow}
+            onAnswer={async (id) => setAsks((list) => list.filter((a) => a.id !== id))}
+            onClose={() => setOpen(false)}
+            onExtend={extend}
+            onAttach={bridge.saveAttachment}
+          />
+        )
       )}
     </div>
   );

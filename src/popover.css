@@ -1708,6 +1708,10 @@ html.popover-page .popover-window {
   padding: 12px 14px;
   gap: 8px;
 }
+/* Hung from the menu bar, it clears the arrow like the other panels */
+.voice-panel.talk {
+  margin-top: 11px;
+}
 .voice-sub {
   font-size: 12px;
   color: var(--pop-text-3);

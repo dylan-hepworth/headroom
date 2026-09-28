@@ -206,6 +206,41 @@ export const bridge = inApp
     }
   : mockBridge();
 
+/** A made-up voice for the mic: louder and quieter by turns, a sentence coming in a few words at a time, then quiet,
+ *  so a clicked mic stops itself the way it would for real. */
+function mockVoice() {
+  const said = "Tell the coder to keep the session code in one file";
+  const heard = new Set<(heard: Heard) => void>();
+  const tell = (h: Heard) => heard.forEach((f) => f(h));
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let words = "";
+  const end = () => clearInterval(timer);
+  return {
+    listenStart: async () => {
+      end();
+      let t = 0;
+      words = "";
+      timer = setInterval(() => {
+        t++;
+        const all = said.split(" ");
+        const now = all.slice(0, Math.floor(t / 4)).join(" ");
+        const talking = Math.floor(t / 4) <= all.length;
+        tell({ kind: "level", level: talking ? 0.25 + 0.6 * Math.abs(Math.sin(t / 2.3)) * Math.random() : 0.02 });
+        if (now !== words) tell({ kind: "words", text: (words = now) });
+      }, 80);
+    },
+    listenStop: async () => {
+      end();
+      tell({ kind: "done", text: words });
+    },
+    listenCancel: async () => end(),
+    onVoice: async (then: (heard: Heard) => void) => {
+      heard.add(then);
+      return () => void heard.delete(then);
+    },
+  };
+}
+
 /** The same calls as the app, on made-up data kept in memory. */
 function mockBridge() {
   const listeners = new Set<() => void>();
@@ -237,7 +272,17 @@ function mockBridge() {
     popoverArrow: async () => 60,
     popoverResize: async (_height: number) => {},
     onPopover: async (_event: string, _then: (payload: unknown) => void) => () => {},
-    pendingSessions: async (): Promise<Pending[]> => [],
+    pendingSessions: async (): Promise<Pending[]> => [
+      {
+        id: "c3",
+        title: "Blog redesign",
+        project: "blog",
+        state: "working",
+        since: Date.now() - 14 * 60_000,
+        what: "Editing posts/2026-09-rust-notes.md",
+        icon: { emoji: "📚" },
+      },
+    ],
     openPending: async (_session: string) => {},
     sendToSession: async (_session: string, _text: string) => {},
     stopStep: async (_session: string) => {},
@@ -247,11 +292,8 @@ function mockBridge() {
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
     openPlanner: async () => {},
-    lastChat: async (): Promise<string | null> => null,
-    listenStart: async () => {},
-    listenStop: async () => {},
-    listenCancel: async () => {},
-    onVoice: async (_then: (heard: Heard) => void) => () => {},
+    lastChat: async (): Promise<string | null> => "c3",
+    ...mockVoice(),
     lastMessage: async (_session: string): Promise<string | null> =>
       "Launch the sign-in redesign: new login page, magic links, and the help docs for it.",
     startTeam: async (_lead: string, _name: string, _managers: Launch[]) => "team-1",
