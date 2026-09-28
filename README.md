@@ -30,7 +30,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.png">
-    <img src="assets/readme/hero.png" width="820" alt="Headroom's list of chats, dropped down from its menu bar item. Under Needs you, a chat with a question and one asking to run a build command, with Answer and Review buttons. Under Working, a photo library cleanup running a Python script, with a message just sent to it, Send Now, Message, and Open in Claude buttons, and a docs site editing a page.">
+    <img src="assets/readme/hero.png" width="820" alt="Headroom's list of chats, dropped down from its menu bar item, each with its own icon: a rocket, a planet, a photo, and a wave. Under Needs you, a chat with a question and one asking to run a build command, with Answer and Review buttons. Under Working, a photo library cleanup running a Python script, with a message just sent to it, Send Now, Message, and Open in Claude buttons, and a docs site editing a page.">
   </picture>
 </p>
 
@@ -176,6 +176,40 @@ For a finished chat to take a reply from the menu bar, its turn waits for one, f
 
 <br>
 
+### Talking instead of typing
+
+Every box Headroom has you write in has a mic: answers, replies, messages to a chat at work, and the planner. Click it and talk, and it stops when you pause, or hold it down while you talk and let go when you're done. It uses macOS's own speech recognition, on your Mac wherever it can.
+
+To talk to a chat from anywhere, press ⌃⌥Space. A panel drops down from the menu bar, already listening, and sends what you say to the chat you last followed, the way **Message** or **Reply** would. A chat that can't take it from Headroom right then gets it copied, and opened for you to paste. ⇥ picks another chat, ↩ sends, and ⎋ lets it go. Pick a different shortcut, or turn it off, in Settings → General.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/talk-dark.png">
+    <img src="assets/readme/talk.png" width="800" alt="The talk panel, dropped down from Headroom's menu bar item: Talking to Blog redesign, with the blog's books emoji, the words &quot;Tell the coder to keep the session&quot; coming in, and a red waveform. Under it, the keys: return to stop, tab for another chat, escape to cancel, and a note that a pause stops it too, or ⌃⌥Space again.">
+  </picture>
+</p>
+
+macOS asks once to let Headroom use the microphone and speech recognition.
+
+<br>
+
+### Planning a team
+
+**Plan Agents…** in the menu opens the planner: a grid where you lay out a team of agents and draw who reports to whom. Each one gets a name, an icon, a model (Opus, Sonnet, or Haiku), standing instructions, the commands and skills it should use, and what it's allowed to do: read files, edit them, run commands, or browse the web. An arrow can loop back, so a coder's work goes to a reviewer until it's approved (up to however many rounds you say), and any agent can be told to keep going until something's true, like the tests passing.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/planner-dark.png">
+    <img src="assets/readme/planner.png" width="820" alt="The planner window with a team called My company: a Lead on Opus at the top, with Marketing, Development, and R&amp;D managers under it, each with their own workers, like a Copywriter, a Coder, a Tester marked until the tests pass, and a Findings agent that two researchers report to. A dashed arrow loops from the Code reviewer back to the Coder, marked until approved, max 3. Development is selected, and the side panel shows its role, model, standing instructions, a /review command, and checkboxes for reading files, editing files, and running commands.">
+  </picture>
+</p>
+
+**Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. Stop them all from the planner, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart.
+
+The managers' work counts toward your usage like any other Claude Code session.
+
+<br>
+
 ### Telling Claude about your limits
 
 Turn on **Add a note when I'm near a limit** in the Hooks settings, and once you're past 85% (or whatever you pick), your messages carry a short note so Claude can wrap up or save its progress before you run out.
@@ -231,14 +265,14 @@ A token's check only reports the 5-hour and weekly limits. If your plan has a we
 
 ## Using it
 
-Click the menu bar item and you get your **5-hour** and **Weekly** usage, with when each one resets (plus a model's own weekly limit, like Fable's, if your plan has one), **Open Usage Page**, **Refresh Now**, **Settings…** (⌘,), and **Check for Updates…**. While a session is waiting on an answer, there's also **Show Waiting Requests**. With Hands-free on, a click opens the list of your chats instead (or the requests, while any are waiting), and the menu is a right-click away. **Pause Alerts and Requests** quiets Headroom for 30 minutes, an hour, 3 hours, until tomorrow morning, or until you resume: no alerts, and requests go to each session's own prompt instead of dropping down.
+Click the menu bar item and you get your **5-hour** and **Weekly** usage, with when each one resets (plus a model's own weekly limit, like Fable's, if your plan has one), **Open Usage Page**, **Refresh Now**, **Settings…** (⌘,), and **Check for Updates…**. While a session is waiting on an answer, there's also **Show Waiting Requests**. With Hands-free on, a click opens the list of your chats instead (or the requests, while any are waiting), and the menu is a right-click away. **Plan Agents…** opens the planner. **Pause Alerts and Requests** quiets Headroom for 30 minutes, an hour, 3 hours, until tomorrow morning, or until you resume: no alerts, and requests go to each session's own prompt instead of dropping down.
 
 Everything else is in Settings:
 
 - **Usage**: each limit, how far through its window you are, and when you'd hit it at the pace you're going
 - **Alerts**: a notification when either limit passes 50, 60, 70, 80, 90, or 95%, and when a conversation's context is filling up (see below). Alerts stay on screen until you close them, as long as macOS's alert style for Headroom is Persistent; Alerts has a button that opens that setting, since apps can't change it themselves. Turn off **Keep alerts on screen** and Headroom clears each one after a few seconds instead. Hit **Send Test Alert** once so macOS asks for notification permission.
 - **Menu Bar**: both limits, just one, the 5-hour limit with a countdown to when it resets, or just rings with no numbers, including a third, violet ring for a model's own limit like Fable's. Turning the ring off puts back a ✻ that turns 🟠 at 80% and 🔴 at 95%. **Pace arrows** adds ↑ or ↓ to each limit, in the text or inside its ring.
-- **Check usage every** 30 seconds, 1, 5, 10, or 30 minutes, **Open at login**, your sign-in, and updates. Headroom checks for updates on its own once a day and tells you when there's a new version.
+- **Check usage every** 30 seconds, 1, 5, 10, or 30 minutes, **Open at login**, the shortcut for talking to a chat (⌃⌥Space unless you change it), your sign-in, and updates. Headroom checks for updates on its own once a day and tells you when there's a new version.
 
 The search at the top of the sidebar (⌘F) finds any setting, typos and half-typed words included.
 
@@ -303,7 +337,7 @@ npm install
 npm run dev
 ```
 
-Almost everything lives in [`src-tauri/src/main.rs`](src-tauri/src/main.rs). The Claude Code hooks are in [`hooks.rs`](src-tauri/src/hooks.rs), and [`sessions.rs`](src-tauri/src/sessions.rs) keeps track of what they report. The settings window is in [`src/`](src), and `npm run ui` opens it in a browser on made-up data, so you can work on it without building the app. The approvals panel is [`src/Popover.tsx`](src/Popover.tsx); add `?popover` to that address to see it. Cutting a release is in [RELEASING.md](RELEASING.md).
+Almost everything lives in [`src-tauri/src/main.rs`](src-tauri/src/main.rs). The Claude Code hooks are in [`hooks.rs`](src-tauri/src/hooks.rs), and [`sessions.rs`](src-tauri/src/sessions.rs) keeps track of what they report. The settings window is in [`src/`](src), and `npm run ui` opens it in a browser on made-up data, so you can work on it without building the app. The approvals panel is [`src/Popover.tsx`](src/Popover.tsx); add `?popover` to that address to see it, `?pending` for the list of chats, `?popover&talk` for the talk panel, and `?planner` for the planner. The planner's teams are started in [`team.rs`](src-tauri/src/team.rs), and speech is [`speech.rs`](src-tauri/src/speech.rs). Cutting a release is in [RELEASING.md](RELEASING.md).
 
 ## Uninstall
 
