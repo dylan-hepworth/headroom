@@ -101,8 +101,15 @@
   stroke-width: 1.5;
   stroke-dasharray: 4 4;
 }
+/* Centered on the loop's curve, so it's plainly that loop's, and a click on it picks the arrow like the curve does */
+.loop-tag-box {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
 .loop-tag {
-  float: right;
+  cursor: pointer;
   white-space: nowrap;
   padding: 3px 8px;
   border-radius: 999px;
@@ -226,6 +233,9 @@
   font-size: 12px;
   color: var(--pop-text-3);
 }
+.loop-hint {
+  margin-top: 14px;
+}
 .inspector-label {
   margin: 14px 0 6px;
   font-size: 11px;
@@ -268,6 +278,19 @@
   color: var(--pop-text);
   background: var(--pop-card-solid);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+/* In the dark the card color is nearly the track's, so the picked one is lit instead, the way macOS does it */
+@media (prefers-color-scheme: dark) {
+  .segmented button {
+    color: var(--pop-text-3);
+  }
+  .segmented button.on {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.24);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
+  }
 }
 .chips {
   display: flex;

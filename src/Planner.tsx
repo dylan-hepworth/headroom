@@ -302,9 +302,12 @@ export function Canvas({
               <path d={path(a, b)} markerEnd="url(#arrow)" />
               {e.loop && (
                 <>
+                  <path className="wire-hit" d={loopPath(a, b)} />
                   <path className="wire-loop" d={loopPath(a, b)} markerEnd="url(#arrow)" />
-                  <foreignObject x={Math.min(a.x, b.x) - 250} y={(a.y + b.y) / 2 + H / 2 - 12} width={200} height={30}>
-                    <div className="loop-tag">{live ? `↻ round 2 of ${e.loop.rounds}` : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}</div>
+                  <foreignObject x={loopMiddle(a, b).x - 110} y={loopMiddle(a, b).y - 15} width={220} height={30}>
+                    <div className="loop-tag-box">
+                      <div className="loop-tag">{live ? `↻ round 2 of ${e.loop.rounds}` : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}</div>
+                    </div>
                   </foreignObject>
                 </>
               )}
@@ -366,6 +369,12 @@ function loopPath(a: Agent, b: Agent) {
   const [x1, y1, x2, y2] = [b.x, b.y + H / 2, a.x, a.y + H / 2];
   const out = Math.min(x1, x2) - 44;
   return `M${x1} ${y1} C${out} ${y1} ${out} ${y2} ${x2} ${y2}`;
+}
+
+/** The middle of a loop's way back, where its tag sits. */
+function loopMiddle(a: Agent, b: Agent) {
+  const out = Math.min(a.x, b.x) - 44;
+  return { x: (b.x + 6 * out + a.x) / 8, y: (a.y + b.y + H) / 2 };
 }
 
 function Inspector({
@@ -531,6 +540,9 @@ function Inspector({
         Keep going until…
       </label>
       {a.until !== undefined && <input className="inspector-field" value={a.until} onChange={(ev) => onAgent({ ...a, until: ev.target.value })} />}
+      <div className="inspector-hint loop-hint">
+        To send work back until it's right, like a review, click the arrow between two agents and turn on Loop.
+      </div>
       <span className="inspector-delete-room" />
       <button className="ask-btn delete" onClick={onDelete} title="Its arrows go with it">
         Delete Agent <kbd>⌫</kbd>
