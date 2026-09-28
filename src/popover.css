@@ -1681,3 +1681,23 @@ html.popover-page .popover-window {
   background: var(--pop-red);
   transition: height 0.08s linear;
 }
+.spoken-field {
+  position: relative;
+}
+.spoken-field textarea {
+  padding-right: 34px;
+}
+.spoken-field.on textarea {
+  padding-right: 90px;
+}
+.spoken-mic {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.spoken-field .ask-heard {
+  padding: 4px 2px 0;
+}

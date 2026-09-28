@@ -120,3 +120,33 @@ export function useVoice(onText: (text: string) => void) {
     stop: () => owner === me && bridge.listenStop(),
   };
 }
+
+/** A box to write in, or to say what goes in it: what's said goes after what's typed. */
+export function SpokenField({
+  value,
+  onChange,
+  rows = 3,
+  placeholder,
+  className = "",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  rows?: number;
+  placeholder?: string;
+  className?: string;
+}) {
+  const typed = useRef(value);
+  typed.current = value;
+  const voice = useVoice((said) => onChange(typed.current.trim() ? `${typed.current.trimEnd()} ${said}` : said));
+  return (
+    <div className={voice.listening ? "spoken-field on" : "spoken-field"}>
+      <textarea className={className} rows={rows} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+      {voice.listening?.partial && <div className="ask-heard">{voice.listening.partial}</div>}
+      <span className="spoken-mic">
+        {voice.listening && <Waveform levels={voice.listening.levels} />}
+        <MicButton listening={!!voice.listening} onStart={voice.start} onStop={voice.stop} />
+      </span>
+      {voice.problem && <div className="ask-problem">{voice.problem}</div>}
+    </div>
+  );
+}

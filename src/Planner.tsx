@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
 import { bridge, type TeamRun } from "./bridge";
+import { SpokenField } from "./Voice";
 import "./plan.css";
 import "./popover.css";
 
@@ -484,12 +485,12 @@ function Inspector({
         ))}
       </div>
       <div className="inspector-label">Standing instructions</div>
-      <textarea
+      <SpokenField
         className="inspector-field"
         rows={3}
         value={a.brief}
         placeholder="What it's for, and what it always keeps in mind"
-        onChange={(ev) => onAgent({ ...a, brief: ev.target.value })}
+        onChange={(brief) => onAgent({ ...a, brief })}
       />
       <div className="inspector-label">Commands and skills</div>
       <div className="chips">
@@ -615,12 +616,12 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
           ))}
         </div>
         <div className="inspector-label">The work</div>
-        <textarea
+        <SpokenField
           className="inspector-field"
           rows={3}
           value={work}
           placeholder={chosen ? "What the team's for" : "Pick a chat, and what you last asked it shows here to start from"}
-          onChange={(e) => setWork(e.target.value)}
+          onChange={setWork}
         />
         {managers.length > 0 && (
           <div className="sheet-managers">
