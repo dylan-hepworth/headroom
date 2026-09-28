@@ -1,12 +1,13 @@
-// Talking to a chat from anywhere: ⌃⌥Space brings this down from the menu bar item, listening, to the chat the user
-// last followed. What's said goes to that chat the way a message or reply from the list does. ↩ (or the shortcut
-// again, once it's stopped listening) sends it, ⇥ picks another chat, and ⎋ lets it go.
+// Talking to a chat from anywhere: the shortcut (⌃⌥Space, unless it's changed in Settings) brings this down from the
+// menu bar item, listening, to the chat the user last followed. What's said goes to that chat the way a message or
+// reply from the list does. ↩ (or the shortcut again, once it's stopped listening) sends it, ⇥ picks another chat,
+// and ⎋ lets it go.
 
 import { useEffect, useRef, useState } from "react";
 import { Avatar, type ChatIcon } from "./Avatar";
 import { bridge } from "./bridge";
 import { outline, useSize } from "./Popover";
-import { useVoice, Waveform } from "./Voice";
+import { shortcutLabel, useVoice, Waveform } from "./Voice";
 import "./popover.css";
 
 /** A chat to talk to, and how what's said gets there: after the step it's on, as the reply to its finished turn, or
@@ -20,6 +21,7 @@ export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: ()
   const [at, setAt] = useState(0);
   const [text, setText] = useState("");
   const [status, setStatus] = useState("");
+  const [shortcut, setShortcut] = useState("");
   const voice = useVoice((said) => setText((now) => (now.trim() ? `${now.trimEnd()} ${said}` : said)));
 
   // The chats, the one last followed first, then the ones that can take it now
@@ -31,6 +33,7 @@ export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: ()
       const rest: Chat[] = app.sessions
         .filter((s) => !now.some((c) => c.id === s.id))
         .map((s) => ({ id: s.id, title: s.title ?? s.project, project: s.project, icon: s.icon, takes: null }));
+      setShortcut(shortcutLabel(app.settings.talkShortcut));
       const all = [...now, ...rest];
       const first = all.findIndex((c) => c.id === last);
       setChats(first > 0 ? [all[first], ...all.filter((_, i) => i !== first)] : all);
@@ -145,7 +148,9 @@ export function TalkPanel({ arrow = 60, onClose }: { arrow?: number; onClose: ()
             <span>
               <kbd>⎋</kbd> Cancel
             </span>
-            <span className="voice-keys-note">{voice.listening ? "A pause stops it too, or ⌃⌥Space again" : "⌃⌥Space again sends it"}</span>
+            <span className="voice-keys-note">
+              {voice.listening ? `A pause stops it too${shortcut && `, or ${shortcut} again`}` : shortcut && `${shortcut} again sends it`}
+            </span>
           </div>
         </div>
       </div>

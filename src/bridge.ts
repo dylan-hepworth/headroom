@@ -98,6 +98,8 @@ export type Settings = {
   popoverAuto: boolean;
   /** Does each request show in a few lines, rather than on the whole card? */
   compactCards: boolean;
+  /** The shortcut for talking to a chat from anywhere, as the app reads it ("Control+Alt+Space"), or null when off. */
+  talkShortcut: string | null;
   /** Does Claude end each turn by asking what's next, in the popover? */
   askNext: boolean;
   /** Hands-free: each question comes with what Claude said that turn, to follow along from the popover. */
@@ -373,6 +375,7 @@ const mock: AppState = {
     approvals: true,
     popoverAuto: true,
     compactCards: false,
+    talkShortcut: "Control+Alt+Space",
     askNext: false,
     handsFree: false,
     paused: { until: "4:10 PM" },

@@ -150,3 +150,72 @@ export function SpokenField({
     </div>
   );
 }
+
+/** A shortcut as the app reads it ("Control+Alt+Space") the way macOS shows one: ⌃⌥Space. */
+export function shortcutLabel(keys: string | null | undefined) {
+  if (!keys) return "";
+  const marks: Record<string, string> = { control: "⌃", ctrl: "⌃", alt: "⌥", option: "⌥", shift: "⇧", command: "⌘", cmd: "⌘", super: "⌘" };
+  const arrows: Record<string, string> = { arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", up: "↑", down: "↓", left: "←", right: "→" };
+  return keys
+    .split("+")
+    .map((part) => {
+      const p = part.toLowerCase();
+      if (marks[p]) return marks[p];
+      if (arrows[p]) return arrows[p];
+      return part.replace(/^Key/, "").replace(/^Digit/, "");
+    })
+    .join("");
+}
+
+/** A shortcut as the app reads it, from a key pressed with at least one of ⌃, ⌥, or ⌘ (⇧ alone would type), or none
+ *  for a key on its own or a modifier still being held. */
+export function shortcutFrom(e: KeyboardEvent | React.KeyboardEvent) {
+  if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return null;
+  if (!e.ctrlKey && !e.altKey && !e.metaKey) return null;
+  const mods = [e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Command"].filter(Boolean);
+  return [...mods, e.code].join("+");
+}
+
+/** Recording a shortcut: click, then press it. ⎋, or a click anywhere else, leaves it as it was. */
+export function ShortcutField({ keys, onChange }: { keys: string | null; onChange: (keys: string | null) => Promise<string | null> }) {
+  const [recording, setRecording] = useState(false);
+  const [problem, setProblem] = useState("");
+  const button = useRef<HTMLButtonElement>(null);
+  const set = (next: string | null) => onChange(next).then((failed) => setProblem(failed ? failed.replace(/^Error: /, "") : ""));
+  const latest = useRef(set);
+  latest.current = set;
+  // Listened for on the window: WebKit doesn't focus a button that's clicked, so the button itself wouldn't hear them
+  useEffect(() => {
+    if (!recording) return;
+    const key = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") return setRecording(false);
+      const next = shortcutFrom(e);
+      if (!next) return;
+      setRecording(false);
+      latest.current(next);
+    };
+    const away = (e: PointerEvent) => !button.current?.contains(e.target as Node) && setRecording(false);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("blur", () => setRecording(false), { once: true });
+    return () => {
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("pointerdown", away, true);
+    };
+  }, [recording]);
+  return (
+    <span className="shortcut-field">
+      <button ref={button} className={recording ? "btn shortcut recording" : "btn shortcut"} onClick={() => setRecording(true)}>
+        {recording ? "Press the keys…" : keys ? shortcutLabel(keys) : "Off"}
+      </button>
+      {keys && !recording && (
+        <button className="btn" onClick={() => set(null)}>
+          Turn Off
+        </button>
+      )}
+      {problem && <span className="shortcut-problem">{problem}</span>}
+    </span>
+  );
+}

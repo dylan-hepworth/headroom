@@ -163,3 +163,10 @@ export const Folder = (p: P) => (
     <path d="M1.8 4.2a1.4 1.4 0 0 1 1.4-1.4h3l1.6 1.6h5a1.4 1.4 0 0 1 1.4 1.4v6.4a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4z" />
   </Icon>
 );
+
+export const Mic = (p: P) => (
+  <Icon {...p}>
+    <rect x="5.25" y="1.75" width="5.5" height="8.5" rx="2.75" />
+    <path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2" />
+  </Icon>
+);

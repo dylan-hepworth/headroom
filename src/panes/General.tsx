@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { PaneProps } from "../App";
 import { bridge, type Limit, type LimitKey } from "../bridge";
-import { Clock, Download, Info, Key, Power, Refresh } from "../icons";
+import { Clock, Download, Info, Key, Mic, Power, Refresh } from "../icons";
 import { Dial, PaceArrow, paceOf, Popup, Row, Section, Switch, useDialReading } from "../ui";
+import { ShortcutField } from "../Voice";
 
 const INTERVALS = [
   [30, "30 seconds"],
@@ -130,6 +131,13 @@ export default function General({ app, settings, set }: PaneProps) {
             info="With a token, each check sends a one-token request to Claude Haiku, which uses a sliver of your limit. Five minutes or longer keeps that negligible."
           >
             <Popup value={settings.interval} options={INTERVALS} onChange={(v) => set("interval", v)} label="Check usage every" />
+          </Row>
+          <Row
+            tile={["red", <Mic />]}
+            title="Talk to a chat"
+            detail="From anywhere: the shortcut drops a panel from the menu bar that listens, and sends what you say to the chat you last followed."
+          >
+            <ShortcutField keys={settings.talkShortcut} onChange={(keys) => set("talkShortcut", keys)} />
           </Row>
         </div>
       </Section>

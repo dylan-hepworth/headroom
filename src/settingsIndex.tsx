@@ -17,6 +17,7 @@ import {
   Layers,
   Pace,
   MenuBar,
+  Mic,
   Power,
   Refresh,
   Shield,
@@ -176,6 +177,13 @@ export const SETTINGS: Setting[] = [
     tile: ["green", icon(Shield)],
     section: "Approvals",
     words: "popover auto panel",
+  },
+  {
+    pane: "general",
+    title: "Talk to a chat",
+    tile: ["red", icon(Mic)],
+    section: "General",
+    words: "voice speech dictation dictate microphone mic talk speak shortcut hotkey keyboard",
   },
   {
     pane: "hooks",

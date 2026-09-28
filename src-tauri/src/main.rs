@@ -401,6 +401,9 @@ struct State {
     /// The chat the user last followed: opened, answered, replied to or messaged, or clicked a notification about. What
     /// the shortcut talks to first.
     last_chat: Mutex<Option<String>>,
+    /// The keyboard shortcut for talking to a chat from anywhere, as the global shortcut plugin reads it
+    /// ("Control+Alt+Space"), or none, when it's off.
+    talk_shortcut: Mutex<Option<String>>,
     /// The app in front, as last written for the hooks, so they hear when it changes (see hooks.rs `looked_at`).
     told_front: Mutex<Option<String>>,
     /// Each chat's icon (see icons.rs).
@@ -1661,6 +1664,31 @@ fn talk_shortcut(app: &AppHandle) {
     show_popover(app, true);
 }
 
+/// The shortcut for talking to a chat, to start with.
+const TALK_SHORTCUT: &str = "Control+Alt+Space";
+
+/// Change the shortcut for talking to a chat, or turn it off with `None`. If the new one can't be had (another app has
+/// it, say), the old one stays.
+fn set_talk_shortcut(state: &State, keys: Option<String>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let shortcuts = state.app.global_shortcut();
+    let old = state.talk_shortcut.lock().unwrap().clone();
+    if let Some(old) = &old {
+        let _ = shortcuts.unregister(old.as_str());
+    }
+    if let Some(keys) = &keys {
+        if let Err(e) = shortcuts.register(keys.as_str()) {
+            if let Some(old) = &old {
+                let _ = shortcuts.register(old.as_str());
+            }
+            return Err(format!("Headroom can't use that shortcut: {e}"));
+        }
+    }
+    store_setting(state, "talk_shortcut", keys.as_deref().unwrap_or("off"));
+    *state.talk_shortcut.lock().unwrap() = keys;
+    Ok(())
+}
+
 /// The chat the user last followed, for the shortcut to talk to first.
 #[tauri::command]
 fn last_chat(state: tauri::State<Arc<State>>) -> Option<String> {
@@ -2322,6 +2350,7 @@ fn get_state(state: tauri::State<Arc<State>>) -> Value {
             "approvals": approvals.0,
             "popoverAuto": *state.popover_auto.lock().unwrap(),
             "compactCards": *state.compact_cards.lock().unwrap(),
+            "talkShortcut": state.talk_shortcut.lock().unwrap().clone(),
             "askNext": *state.ask_next.lock().unwrap(),
             "handsFree": *state.hands_free.lock().unwrap(),
             "paused": match *state.paused.lock().unwrap() {
@@ -2426,6 +2455,15 @@ fn set_setting(key: String, value: Value, state: tauri::State<Arc<State>>) -> Re
             let on = value.as_bool().ok_or_else(bad)?;
             *state.popover_auto.lock().unwrap() = on;
             store_setting(&state, "popover_auto", if on { "on" } else { "off" });
+            changed(&state);
+        }
+        "talkShortcut" => {
+            let keys = match &value {
+                Value::Null => None,
+                Value::String(keys) if !keys.trim().is_empty() => Some(keys.trim().to_string()),
+                _ => return Err(bad()),
+            };
+            set_talk_shortcut(&state, keys)?;
             changed(&state);
         }
         "compactCards" => {
@@ -3298,6 +3336,11 @@ fn build_limit<M: Manager<Wry>>(app: &M, config_dir: &Path, info: LimitInfo) -> 
 fn build_state(app: &tauri::App) -> tauri::Result<State> {
     let config_dir = app.path().app_config_dir()?;
     let icons = icons::Icons::load(&config_dir);
+    let talk_shortcut = match load_setting(&config_dir, "talk_shortcut").as_deref() {
+        Some("off") => None,
+        Some(keys) if !keys.is_empty() => Some(keys.to_string()),
+        _ => Some(TALK_SHORTCUT.to_string()),
+    };
 
     // If there's no saved interval, or it's no longer one of the options in `INTERVALS`, we'll use the default. Same
     // idea for what the menu bar shows.
@@ -3466,6 +3509,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         list_mode: Mutex::new(false),
         talk_mode: Mutex::new(false),
         last_chat: Mutex::new(None),
+        talk_shortcut: Mutex::new(talk_shortcut),
         told_front: Mutex::new(None),
         icons: Mutex::new(icons),
         teams: Mutex::new(team::Teams::default()),
@@ -3523,10 +3567,9 @@ fn main() {
             }
             tauri::async_runtime::spawn(follow_sessions(state.clone()));
             // Talking to a chat from anywhere
-            {
-                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-                let talk = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
-                let _ = app.global_shortcut().register(talk);
+            if let Some(keys) = state.talk_shortcut.lock().unwrap().clone() {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                let _ = app.global_shortcut().register(keys.as_str());
             }
             tauri::async_runtime::spawn(recap_loop(state.clone()));
 
