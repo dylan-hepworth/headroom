@@ -71,12 +71,31 @@ export type Session = {
 };
 
 /** A team from the planner, started on a chat (see team.rs): its managers, each a session of its own. */
+/** How one of a manager's workers is getting on, from the hooks: by its name as a subagent. */
+export type WorkerLive = { working: boolean; activity: string | null; steps: string[]; finished: number; said: string | null };
+
 export type TeamRun = {
   id: string;
+  /** The plan it was started from, as it was then */
+  plan: Plan;
   name: string;
   lead: string;
   started: number;
-  members: { agent: string; name: string; model: string; session: string; state: "working" | "done" | "failed" | "stopped"; text: string }[];
+  /** How the lead's chat is getting on */
+  leadState: { state: "working" | "needs-you" | "done"; doing: string | null; title: string } | null;
+  members: {
+    agent: string;
+    name: string;
+    model: string;
+    session: string;
+    state: "working" | "done" | "failed" | "stopped";
+    /** Its report, or why it stopped */
+    text: string;
+    /** Each worker's name as a subagent, and which agent in the plan it is */
+    workers: Record<string, string>;
+    /** What it and its workers are doing, once its hooks have said */
+    live: { activity: string | null; workers: Record<string, WorkerLive> } | null;
+  }[];
 };
 
 export type Settings = {
@@ -195,8 +214,10 @@ export const bridge = inApp
       listenStop: () => invoke("listen_stop"),
       listenCancel: () => invoke("listen_cancel"),
       onVoice: (then: (heard: Heard) => void) => listen<Heard>("voice", (e) => then(e.payload)),
-      startTeam: (lead: string, name: string, managers: Launch[]) => invoke<string>("start_team", { lead, name, managers }),
+      startTeam: (lead: string, plan: Plan, name: string, managers: Launch[]) => invoke<string>("start_team", { lead, plan, name, managers }),
       stopTeam: (run: string) => invoke("stop_team", { run }),
+      clearTeam: (run: string) => invoke("clear_team", { run }),
+      messageManager: (run: string, agent: string, text: string) => invoke("message_manager", { run, agent, text }),
       teams: () => invoke<TeamRun[]>("teams"),
       headroomInFront: () => invoke<boolean>("headroom_in_front"),
       popoverCards: () => invoke("popover_cards"),
@@ -205,6 +226,76 @@ export const bridge = inApp
       clearToken: () => invoke("clear_token"),
     }
   : mockBridge();
+
+/** My company partway through, for `?planner&running`: Marketing's done, Development's Coder is on its second round
+ *  of review, and R&D's Summarizer is writing while the Lead waits on them. */
+function mockRun(): TeamRun {
+  const worker = (finished: number, working: boolean, steps: string[], said: string | null = null) => ({
+    working,
+    activity: steps.at(-1) ?? null,
+    steps,
+    finished,
+    said,
+  });
+  return {
+    id: "team-1",
+    plan: myCompany as Plan,
+    name: "My company",
+    lead: "c3",
+    started: Date.now() - 18 * 60_000,
+    leadState: { state: "done", doing: "Handed the launch to the team.", title: "Launch the sign-in redesign" },
+    members: [
+      {
+        agent: "mkt",
+        name: "Marketing",
+        model: "opus",
+        session: "m1",
+        state: "done",
+        text: "The launch post and three social posts are ready.\n\n- **Post**: drafts/launch.md, reviewed for tone\n- **Social**: three posts scheduled for Tuesday at 9:00 AM",
+        workers: { copywriter: "copy", "social-posts": "social" },
+        live: {
+          activity: null,
+          workers: {
+            copywriter: worker(1, false, ["Read docs/sign-in.md", "Edited launch.md"], "Wrote the launch post in drafts/launch.md."),
+            "social-posts": worker(1, false, ["Read launch.md", "Edited social.md"], "Scheduled 3 posts for Tuesday."),
+          },
+        },
+      },
+      {
+        agent: "dev",
+        name: "Development",
+        model: "opus",
+        session: "m2",
+        state: "working",
+        text: "",
+        workers: { coder: "coder", "code-reviewer": "review", tester: "tests" },
+        live: {
+          activity: null,
+          workers: {
+            coder: worker(1, true, ["Read the reviewer's notes", "Edited session.ts", "Ran npm test", "Edited session.ts"]),
+            "code-reviewer": worker(1, false, ["Read session.ts", "Read magic-link.ts"], "Round 1: split `createSession` into smaller functions."),
+          },
+        },
+      },
+      {
+        agent: "rnd",
+        name: "R&D",
+        model: "opus",
+        session: "m3",
+        state: "working",
+        text: "",
+        workers: { researcher: "research", summarizer: "sum", findings: "brief" },
+        live: {
+          activity: null,
+          workers: {
+            researcher: worker(1, false, ["Looked something up", "Looked something up", "Edited services.md"], "Compared 6 magic link services."),
+            summarizer: worker(0, true, ["Read services.md", "Edited summary.md"]),
+          },
+        },
+      },
+    ],
+  };
+}
 
 /** A made-up voice for the mic: louder and quieter by turns, a sentence coming in a few words at a time, then quiet,
  *  so a clicked mic stops itself the way it would for real. */
@@ -296,9 +387,11 @@ function mockBridge() {
     ...mockVoice(),
     lastMessage: async (_session: string): Promise<string | null> =>
       "Launch the sign-in redesign: new login page, magic links, and the help docs for it.",
-    startTeam: async (_lead: string, _name: string, _managers: Launch[]) => "team-1",
+    startTeam: async (_lead: string, _plan: Plan, _name: string, _managers: Launch[]) => "team-1",
     stopTeam: async (_run: string) => {},
-    teams: async (): Promise<TeamRun[]> => [],
+    clearTeam: async (_run: string) => {},
+    messageManager: async (_run: string, _agent: string, _text: string) => {},
+    teams: async (): Promise<TeamRun[]> => (location.search.includes("running") ? [mockRun()] : []),
     headroomInFront: async () => false,
     emojiNames: async (): Promise<[string, string][]> => [
       ["🦊", "fox"],

@@ -1,4 +1,4 @@
-/* The agent planner mockup (see PlanPreview.tsx): a grid of agents wired together, and a panel for the one picked */
+/* The agent planner (see Planner.tsx): a grid of agents wired together, and a panel for the one picked */
 
 .plan-stage {
   position: fixed;
@@ -353,6 +353,26 @@
 .plan-dot.done {
   background: #3b82f6;
 }
+.plan-dot.failed {
+  background: #e5484d;
+}
+/* Not started, or stopped; the lead waiting on its managers is still very much in it */
+.grid-node.waiting:not(.lead),
+.grid-node.stopped {
+  opacity: 0.6;
+}
+.grid-node.failed {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #e5484d 70%, transparent);
+}
+.live-said {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  background: var(--pop-fill);
+}
 .live-now {
   font-size: 13px;
 }
@@ -370,36 +390,6 @@
 }
 .live-open {
   margin: 14px 0 0 -11px;
-}
-.running-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 420px;
-  margin: 0 auto 14px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  color: var(--pop-text);
-  background: var(--pop-bg-solid);
-  box-shadow: 0 0 0 0.5px var(--pop-edge);
-}
-.running-row div div {
-  font-size: 12px;
-  color: var(--pop-text-3);
-}
-.plan-pill {
-  all: unset;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--pop-accent);
-  background: color-mix(in srgb, var(--pop-accent) 14%, transparent);
-  cursor: pointer;
-}
-.plan-stage:has(.running-row) {
-  place-items: start center;
-  padding: 24px 0;
 }
 
 /* The planner in its own window: all of it, with room for the window's buttons at the top left */

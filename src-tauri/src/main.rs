@@ -1782,6 +1782,7 @@ fn last_message(session: String, state: tauri::State<Arc<State>>) -> Option<Stri
 #[tauri::command]
 fn start_team(
     lead: String,
+    plan: Value,
     name: String,
     managers: Vec<Value>,
     state: tauri::State<Arc<State>>,
@@ -1803,6 +1804,7 @@ fn start_team(
                 session,
                 pid: Some(pid),
                 state: team::State::Working,
+                workers: m.workers.clone(),
             }),
             Err(e) => {
                 // All or none: the ones that did start are stopped
@@ -1812,7 +1814,7 @@ fn start_team(
         }
     }
     let started = Local::now().timestamp_millis();
-    state.teams.lock().unwrap().runs.push(team::Run { id: run.clone(), name, lead, started, members });
+    state.teams.lock().unwrap().runs.push(team::Run { id: run.clone(), plan, name, lead, started, members });
     changed(&state);
     Ok(run)
 }
@@ -1884,7 +1886,48 @@ fn stop_teams(state: &State, run: Option<&str>) {
 /// The teams that have run since Headroom started, for the planner.
 #[tauri::command]
 fn teams(state: tauri::State<Arc<State>>) -> Value {
-    state.teams.lock().unwrap().to_json()
+    let mut runs = state.teams.lock().unwrap().to_json();
+    // With what the hooks have said: how the lead's getting on, and what each manager and its workers are doing
+    let sessions = state.sessions.lock().unwrap();
+    for run in runs.as_array_mut().into_iter().flatten() {
+        run["leadState"] = run["lead"].as_str().and_then(|id| sessions.state_of(id)).unwrap_or_default();
+        for m in run["members"].as_array_mut().into_iter().flatten() {
+            let live = m["session"].as_str().and_then(|id| sessions.manager(id));
+            m["live"] = live.map(|m| m.to_json()).unwrap_or_default();
+        }
+    }
+    runs
+}
+
+/// A message from the user for one of a team's managers, which goes in after its current step, the way one to a chat
+/// at work from the list does.
+#[tauri::command]
+fn message_manager(run: String, agent: String, text: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    let session = {
+        let teams = state.teams.lock().unwrap();
+        let r = teams.runs.iter().find(|r| r.id == run).ok_or("That team isn't running any more")?;
+        let m = r.members.iter().find(|m| m.agent == agent).ok_or("That manager isn't on the team")?;
+        if m.state != team::State::Working {
+            return Err(format!("{} is done, so there's nobody to tell", m.name));
+        }
+        m.session.clone()
+    };
+    hooks::interject(&session, &text)
+}
+
+/// Put away a team that's done, and forget its managers.
+#[tauri::command]
+fn clear_team(run: String, state: tauri::State<Arc<State>>) {
+    let gone: Vec<team::Run> = {
+        let mut teams = state.teams.lock().unwrap();
+        // Not one that's still at work: that's stopped first
+        let done = |r: &team::Run| r.members.iter().all(|m| m.state != team::State::Working);
+        let (gone, kept) = std::mem::take(&mut teams.runs).into_iter().partition(|r| r.id == run && done(r));
+        teams.runs = kept;
+        gone
+    };
+    let mut sessions = state.sessions.lock().unwrap();
+    gone.iter().flat_map(|r| &r.members).for_each(|m| sessions.forget_manager(&m.session));
 }
 
 /// The saved agent plans (see plans.rs).
@@ -3622,6 +3665,8 @@ fn main() {
             start_team,
             stop_team,
             teams,
+            message_manager,
+            clear_team,
             headroom_in_front,
             last_chat,
             emoji_names,

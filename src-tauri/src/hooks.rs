@@ -1351,6 +1351,18 @@ fn keep(event: &Value) -> Value {
     }
     if let Some(team) = team() {
         out.insert("team".into(), team.into());
+        // Which of its workers did this, and which one it handed work to and what came back, for the planner to
+        // follow each of them (a worker's `agent_type` is its name in the team, as the planner gave it)
+        if event["agent_id"].as_str().is_some_and(|id| !id.is_empty()) {
+            if let Some(worker) = event["agent_type"].as_str() {
+                out.insert("worker".into(), worker.into());
+            }
+        } else if let Some(worker) = event["tool_input"]["subagent_type"].as_str() {
+            out.insert("handed".into(), worker.into());
+            if let Some(said) = subagent_result(&event["tool_response"]) {
+                out.insert("said".into(), clip(&said).into());
+            }
+        }
     }
     out.insert("at".into(), chrono::Utc::now().timestamp_millis().into());
     Value::Object(out)
@@ -1405,6 +1417,16 @@ fn tool_detail(input: &Value) -> Option<String> {
         .iter()
         .find_map(|key| input[*key].as_str())
         .map(clip)
+}
+
+/// What a subagent said back when it was done: Claude Code's tool result for it, as text or as content blocks.
+fn subagent_result(response: &Value) -> Option<String> {
+    if let Some(text) = response.as_str() {
+        return Some(text.to_string());
+    }
+    let blocks = response["content"].as_array()?;
+    let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
+    (!text.is_empty()).then(|| text.join("\n\n"))
 }
 
 /// For a held request, the whole of what it would do, since that's what the user approves. For the built-in tools

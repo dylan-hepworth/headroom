@@ -29,6 +29,8 @@ pub struct Manager {
     /// Its workers, as Claude Code's `--agents` takes them: by name, each with a description, instructions, a model,
     /// and tools
     pub agents: BTreeMap<String, Value>,
+    /// Which agent in the plan each of those names is, to follow them on the planner's grid
+    pub workers: BTreeMap<String, String>,
 }
 
 impl Manager {
@@ -44,6 +46,12 @@ impl Manager {
             prompt: text("prompt")?,
             tools: tools.iter().filter_map(|t| t.as_str().map(String::from)).collect(),
             agents: agents.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            workers: v["workers"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                .collect(),
         })
     }
 }
@@ -65,10 +73,14 @@ pub struct Member {
     pub session: String,
     pub pid: Option<i32>,
     pub state: State,
+    /// Its workers' names in the team, and which agent in the plan each is
+    pub workers: BTreeMap<String, String>,
 }
 
 pub struct Run {
     pub id: String,
+    /// The plan it was started from, as it was then, for the planner to follow it on
+    pub plan: Value,
     /// The team's name, from the planner
     pub name: String,
     /// The lead's session
@@ -233,10 +245,11 @@ impl Teams {
                             State::Stopped => ("stopped", String::new()),
                         };
                         json!({ "agent": m.agent, "name": m.name, "model": m.model, "session": m.session,
-                                "state": state, "text": text })
+                                "state": state, "text": text, "workers": m.workers })
                     })
                     .collect();
-                json!({ "id": r.id, "name": r.name, "lead": r.lead, "started": r.started, "members": members })
+                json!({ "id": r.id, "plan": r.plan, "name": r.name, "lead": r.lead, "started": r.started,
+                        "members": members })
             })
             .collect();
         Value::Array(runs)
@@ -255,6 +268,7 @@ mod tests {
             prompt: "Build it".into(),
             tools: tools.iter().map(|t| t.to_string()).collect(),
             agents: [("coder".to_string(), worker)].into(),
+            workers: BTreeMap::new(),
         }
     }
 

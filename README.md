@@ -204,7 +204,7 @@ macOS asks once to let Headroom use the microphone and speech recognition.
   </picture>
 </p>
 
-**Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. Stop them all from the planner, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart.
+**Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. While they work, the planner follows them on the same grid: what each agent's doing, the round each loop's on, each manager's report as it comes in, and a box to message the Lead or a manager. Stop them all from there, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart.
 
 The managers' work counts toward your usage like any other Claude Code session.
 
@@ -337,7 +337,7 @@ npm install
 npm run dev
 ```
 
-Almost everything lives in [`src-tauri/src/main.rs`](src-tauri/src/main.rs). The Claude Code hooks are in [`hooks.rs`](src-tauri/src/hooks.rs), and [`sessions.rs`](src-tauri/src/sessions.rs) keeps track of what they report. The settings window is in [`src/`](src), and `npm run ui` opens it in a browser on made-up data, so you can work on it without building the app. The approvals panel is [`src/Popover.tsx`](src/Popover.tsx); add `?popover` to that address to see it, `?pending` for the list of chats, `?popover&talk` for the talk panel, and `?planner` for the planner. The planner's teams are started in [`team.rs`](src-tauri/src/team.rs), and speech is [`speech.rs`](src-tauri/src/speech.rs). Cutting a release is in [RELEASING.md](RELEASING.md).
+Almost everything lives in [`src-tauri/src/main.rs`](src-tauri/src/main.rs). The Claude Code hooks are in [`hooks.rs`](src-tauri/src/hooks.rs), and [`sessions.rs`](src-tauri/src/sessions.rs) keeps track of what they report. The settings window is in [`src/`](src), and `npm run ui` opens it in a browser on made-up data, so you can work on it without building the app. The approvals panel is [`src/Popover.tsx`](src/Popover.tsx); add `?popover` to that address to see it, `?pending` for the list of chats, `?popover&talk` for the talk panel, and `?planner` for the planner (`?planner&running` for a team at work). The planner's teams are started in [`team.rs`](src-tauri/src/team.rs), and speech is [`speech.rs`](src-tauri/src/speech.rs). Cutting a release is in [RELEASING.md](RELEASING.md).
 
 ## Uninstall
 

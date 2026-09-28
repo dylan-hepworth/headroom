@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
 import { bridge, type TeamRun } from "./bridge";
 import { SpokenField } from "./Voice";
+import { LivePanel, liveOf, RunBar } from "./Running";
 import "./plan.css";
 import "./popover.css";
 
@@ -44,7 +45,7 @@ export const H = 64;
 export const MODELS: Model[] = ["Opus", "Sonnet", "Haiku"];
 const TOOLS = ["Read files", "Edit files", "Run commands", "Browse the web"];
 const snap = (v: number) => Math.round(v / GRID) * GRID;
-const edgeId = (e: Edge) => `${e.from}>${e.to}`;
+export const edgeId = (e: Edge) => `${e.from}>${e.to}`;
 
 /** Would an arrow from `from` to `to` lead back round to `from`? Only loops may do that, and they say so. */
 function makesCircle(edges: Edge[], from: string, to: string) {
@@ -101,7 +102,7 @@ function teamOf(plan: Plan, id: string): string[] {
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 /** Someone's words, to go into a sentence: without the full stop they ended with, and lower case to start. */
 const clause = (s: string) => lower(s.trim().replace(/[.!\s]+$/, ""));
-const list = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+export const list = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 /** What's said about one agent: what it's for, what it waits for, how it loops, and what it may use. */
 function describe(plan: Plan, a: Agent) {
@@ -134,7 +135,7 @@ function inFlow(plan: Plan): Agent[] {
 
 /** The workers on a manager's team, or with none, the ones that report to the lead directly. One in more than one
  *  team goes with the first (the planner says so). */
-const teamFor = (plan: Plan, manager: string | null) => inFlow(plan).filter((a) => (teamOf(plan, a.id)[0] ?? null) === manager);
+export const teamFor = (plan: Plan, manager: string | null) => inFlow(plan).filter((a) => (teamOf(plan, a.id)[0] ?? null) === manager);
 
 /** The plan in words, for the chat to run it all itself: every worker a subagent of its own, grouped under its manager,
  *  whose words guide the lead. */
@@ -178,7 +179,16 @@ const TOOL_NAMES: Record<string, string[]> = {
 const toolNames = (tools: string[]) => [...new Set(tools.flatMap((t) => TOOL_NAMES[t] ?? []))];
 
 /** A manager to start as a session of its own (see team.rs). */
-export type Launch = { agent: string; name: string; model: string; prompt: string; tools: string[]; agents: Record<string, unknown> };
+export type Launch = {
+  agent: string;
+  name: string;
+  model: string;
+  prompt: string;
+  tools: string[];
+  agents: Record<string, unknown>;
+  /** Each worker's name as a subagent, and which agent in the plan it is */
+  workers: Record<string, string>;
+};
 
 /** How a plan starts on a chat, for `work`: what the lead's told, and each manager that runs as a session of its own,
  *  with its workers as its subagents. A plan without managers is all the lead's, as `verbalize` says it. */
@@ -200,12 +210,21 @@ export function launch(plan: Plan, work: string): { lead: string; managers: Laun
 
   const specs: Launch[] = managers.map((m) => {
     const team = teamFor(plan, m.id);
-    const agents = Object.fromEntries(
-      team.map((a) => [
+    // Each worker's name as a subagent, one of its own even when two share a name, and which agent that is
+    const keys = new Map<string, string>();
+    for (const a of team) {
+      const base =
         a.name
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "") || a.id,
+          .replace(/^-|-$/g, "") || a.id;
+      let key = base;
+      for (let n = 2; [...keys.values()].includes(key); n++) key = `${base}-${n}`;
+      keys.set(a.id, key);
+    }
+    const agents = Object.fromEntries(
+      team.map((a) => [
+        keys.get(a.id)!,
         {
           description: a.name + (a.brief.trim() ? `: ${clause(a.brief)}` : ""),
           prompt: `You're ${a.name}. ${describe(plan, a)}`,
@@ -234,7 +253,8 @@ export function launch(plan: Plan, work: string): { lead: string; managers: Laun
       m.until ? `Keep going until ${clause(m.until)}.` : "",
       "When your team's done, end with a short report of what it did and anything the lead should know. That report is what the lead gets.",
     ].filter(Boolean);
-    return { agent: m.id, name: m.name, model: m.model.toLowerCase(), prompt: prompt.join("\n\n"), tools, agents };
+    const workers = Object.fromEntries(team.map((a) => [keys.get(a.id)!, a.id]));
+    return { agent: m.id, name: m.name, model: m.model.toLowerCase(), prompt: prompt.join("\n\n"), tools, agents, workers };
   });
   return { lead: lines.join("\n"), managers: specs };
 }
@@ -247,6 +267,7 @@ export function Canvas({
   onMove,
   onConnect,
   live,
+  rounds,
 }: {
   agents: Agent[];
   edges: Edge[];
@@ -254,8 +275,10 @@ export function Canvas({
   onSelect: (id: string | null) => void;
   onMove?: (id: string, x: number, y: number) => void;
   onConnect?: (from: string, to: string) => void;
-  /** While it runs, how each agent's getting on (see PlanPreview.tsx) */
+  /** While it runs, how each agent's getting on (see Running.tsx) */
   live?: Record<string, { status: string; doing: string }>;
+  /** While it runs, the round each loop's on, by arrow */
+  rounds?: Record<string, number>;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
@@ -306,7 +329,9 @@ export function Canvas({
                   <path className="wire-loop" d={loopPath(a, b)} markerEnd="url(#arrow)" />
                   <foreignObject x={loopMiddle(a, b).x - 110} y={loopMiddle(a, b).y - 15} width={220} height={30}>
                     <div className="loop-tag-box">
-                      <div className="loop-tag">{live ? `↻ round 2 of ${e.loop.rounds}` : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}</div>
+                      <div className="loop-tag">
+                        {rounds?.[edgeId(e)] ? `↻ round ${rounds[edgeId(e)]} of ${e.loop.rounds}` : `↻ until ${e.loop.until} · max ${e.loop.rounds}`}
+                      </div>
                     </div>
                   </foreignObject>
                 </>
@@ -541,7 +566,8 @@ function Inspector({
       </label>
       {a.until !== undefined && <input className="inspector-field" value={a.until} onChange={(ev) => onAgent({ ...a, until: ev.target.value })} />}
       <div className="inspector-hint loop-hint">
-        To send work back until it's right, like a review, click the arrow between two agents and turn on Loop.
+        To send work back until it's right, like a review: drag from an agent's bottom dot onto the one that checks it, click that arrow, and turn on
+        Loop.
       </div>
       <span className="inspector-delete-room" />
       <button className="ask-btn delete" onClick={onDelete} title="Its arrows go with it">
@@ -591,7 +617,7 @@ function StartSheet({ plan, onClose }: { plan: Plan; onClose: () => void }) {
     setProblem("");
     setBusy(true);
     try {
-      if (managers.length) await bridge.startTeam(chat.id, plan.name, managers);
+      if (managers.length) await bridge.startTeam(chat.id, plan, plan.name, managers);
       const started = managers.length ? `Started ${list(managers.map((m) => m.name))}. ` : "";
       if (takes(chat)) {
         await bridge.sendToSession(chat.id, text);
@@ -700,12 +726,17 @@ export function PlannerWindow() {
   const [deleting, setDeleting] = useState<string | null>(null);
   // Teams at work on chats, and ones that finished in the last while, to follow and stop
   const [runs, setRuns] = useState<TeamRun[]>([]);
+  const loadRuns = () => bridge.teams().then(setRuns);
   useEffect(() => {
-    const load = () => bridge.teams().then(setRuns);
-    load();
-    const timer = setInterval(load, 2000);
+    loadRuns();
+    const timer = setInterval(loadRuns, 2000);
     return () => clearInterval(timer);
   }, []);
+  // The open plan's latest run, followed on the grid until the user goes back to editing
+  const run = plan ? runs.filter((r) => r.plan.id === plan.id).at(-1) : undefined;
+  const [editing, setEditing] = useState<string | null>(null);
+  const watching = !!run && editing !== run.id;
+  const live = run && watching ? liveOf(run) : undefined;
   useEffect(() => {
     bridge.plans().then((all) => {
       setPlans(all);
@@ -769,7 +800,8 @@ export function PlannerWindow() {
       return;
     }
     if (e.key !== "Backspace" && e.key !== "Delete") return;
-    if ((e.target as Element).closest("input, textarea")) return;
+    // Following a team, the grid's the plan as it started, which isn't for editing
+    if (watching || (e.target as Element).closest("input, textarea")) return;
     remove();
   };
   // The agent or arrow that's picked, and an agent's arrows with it
@@ -872,7 +904,7 @@ export function PlannerWindow() {
           Save As…
         </button>
         <span className="toolbar-gap" />
-        <button className="ask-btn ghost" onClick={addAgent}>
+        <button className="ask-btn ghost" disabled={watching} onClick={addAgent}>
           + Agent
         </button>
         <button
@@ -883,40 +915,48 @@ export function PlannerWindow() {
           Add to a Chat…
         </button>
       </div>
+      {run && <RunBar run={run} watching={watching} onWatch={(watch) => setEditing(watch ? null : run.id)} onStopped={loadRuns} />}
       {runs
-        .filter((r) => r.members.some((m) => m.state === "working"))
+        .filter((r) => r.plan.id !== plan.id && r.members.some((m) => m.state === "working"))
         .map((r) => (
           <div key={r.id} className="plan-running">
             <span className="plan-dot working" />
-            <b>{r.name}</b>
-            <span>{r.members.map((m) => `${m.name} ${m.state === "working" ? "working" : m.state === "done" ? "done" : m.state}`).join(" · ")}</span>
+            <b>{r.plan.name} is at work</b>
+            <span>on {r.leadState?.title ?? "its chat"}</span>
             <span className="ask-spacer" />
-            <button className="ask-btn ghost" onClick={() => bridge.stopTeam(r.id).then(() => bridge.teams().then(setRuns))}>
-              Stop
+            <button className="ask-btn ghost" onClick={() => open(plans.find((p) => p.id === r.plan.id) ?? r.plan)}>
+              Follow the Team
             </button>
           </div>
         ))}
-      {issues.length > 0 && <div className="plan-issues">{issues.join(" ")}</div>}
-      <div className="plan-body">
-        <Canvas
-          agents={plan.agents}
-          edges={plan.edges}
-          selected={selected}
-          onSelect={setSelected}
-          onMove={(id, x, y) => change({ ...plan, agents: plan.agents.map((a) => (a.id === id ? { ...a, x, y } : a)) })}
-          onConnect={(from, to) => {
-            if (plan.edges.some((e) => e.from === from && e.to === to) || makesCircle(plan.edges, from, to)) return;
-            change({ ...plan, edges: [...plan.edges, { from, to }] });
-          }}
-        />
-        <Inspector
-          plan={plan}
-          selected={selected}
-          onAgent={setAgent}
-          onEdge={(e) => change({ ...plan, edges: plan.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
-          onDelete={remove}
-        />
-      </div>
+      {issues.length > 0 && !watching && <div className="plan-issues">{issues.join(" ")}</div>}
+      {run && live ? (
+        <div className="plan-body">
+          <Canvas agents={run.plan.agents} edges={run.plan.edges} selected={selected} onSelect={setSelected} live={live.live} rounds={live.rounds} />
+          <LivePanel run={run} selected={selected} />
+        </div>
+      ) : (
+        <div className="plan-body">
+          <Canvas
+            agents={plan.agents}
+            edges={plan.edges}
+            selected={selected}
+            onSelect={setSelected}
+            onMove={(id, x, y) => change({ ...plan, agents: plan.agents.map((a) => (a.id === id ? { ...a, x, y } : a)) })}
+            onConnect={(from, to) => {
+              if (plan.edges.some((e) => e.from === from && e.to === to) || makesCircle(plan.edges, from, to)) return;
+              change({ ...plan, edges: [...plan.edges, { from, to }] });
+            }}
+          />
+          <Inspector
+            plan={plan}
+            selected={selected}
+            onAgent={setAgent}
+            onEdge={(e) => change({ ...plan, edges: plan.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
+            onDelete={remove}
+          />
+        </div>
+      )}
       {starting && <StartSheet plan={plan} onClose={() => setStarting(false)} />}
       {savingAs !== null && (
         <div className="sheet-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setSavingAs(null)}>

@@ -4,7 +4,7 @@
 // stands: working, waiting on permission, waiting for the user's next message, stopped at a usage limit, or idle.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::Path,
@@ -131,9 +131,101 @@ pub enum ChangeKind {
     Finished { reply: Option<String>, ran: Option<chrono::Duration> },
 }
 
+/// A team's manager, which Headroom started from the planner (see team.rs) and follows for it, but which isn't one of
+/// the user's chats: it's never in the list, the dots, or the Sessions pane, and nothing it does sends a notification.
+#[derive(Default)]
+pub struct Manager {
+    /// What it's doing itself, while it works
+    activity: Option<String>,
+    /// The process that ran its last hook, to stop a command so a message goes in right away
+    hook_parent: Option<i32>,
+    /// Its workers, by their name in the team, once each has started
+    workers: BTreeMap<String, Worker>,
+}
+
+/// One of a manager's workers, which runs as its subagent.
+#[derive(Default)]
+struct Worker {
+    /// At work now, rather than done with what it was last handed
+    working: bool,
+    /// What it's doing, or did last
+    activity: Option<String>,
+    /// Its last few steps, the newest last
+    steps: Vec<String>,
+    /// How many times it's finished what it was handed
+    finished: u32,
+    /// What it said back the last time it finished
+    said: Option<String>,
+}
+
+/// How many of a worker's steps the planner shows.
+const STEPS: usize = 5;
+
+impl Manager {
+    fn apply(&mut self, event: &Value) {
+        let name = event["hook_event_name"].as_str().unwrap_or_default();
+        let tool = event["tool_name"].as_str().unwrap_or_default();
+        let detail = event["detail"].as_str().unwrap_or_default();
+        if let Some(pid) = event["ppid"].as_i64().and_then(|p| i32::try_from(p).ok()) {
+            self.hook_parent = Some(pid);
+        }
+        let tool_ran = matches!(name, "PostToolUse" | "PostToolUseFailure");
+        if let Some(key) = event["worker"].as_str() {
+            let worker = self.workers.entry(key.to_string()).or_default();
+            worker.working = true;
+            if tool_ran {
+                let step = activity(tool, detail);
+                worker.steps.push(step.clone());
+                if worker.steps.len() > STEPS {
+                    worker.steps.remove(0);
+                }
+                worker.activity = Some(step);
+            }
+            return;
+        }
+        if let Some(key) = event["handed"].as_str() {
+            let worker = self.workers.entry(key.to_string()).or_default();
+            // Its work came back. (A worker's first step is what says it's started: Claude Code doesn't tell the hooks
+            // when it's handed its work, only when it's done.)
+            if tool_ran {
+                worker.working = false;
+                worker.finished += 1;
+                worker.said = event["said"].as_str().map(String::from);
+                self.activity = None;
+            }
+            return;
+        }
+        match name {
+            "PostToolUse" | "PostToolUseFailure" => self.activity = Some(activity(tool, detail)),
+            "UserPromptSubmit" => self.activity = Some("Reading the work".into()),
+            "Stop" | "StopFailure" => {
+                self.activity = None;
+                self.workers.values_mut().for_each(|w| w.working = false);
+            }
+            _ => {}
+        }
+    }
+
+    /// For the planner: what it's doing, and how each worker's getting on.
+    pub fn to_json(&self) -> Value {
+        let workers: serde_json::Map<String, Value> = self
+            .workers
+            .iter()
+            .map(|(key, w)| {
+                let worker = json!({ "working": w.working, "activity": w.activity, "steps": w.steps,
+                                     "finished": w.finished, "said": w.said });
+                (key.clone(), worker)
+            })
+            .collect();
+        json!({ "activity": self.activity, "workers": workers })
+    }
+}
+
 #[derive(Default)]
 pub struct Sessions {
     sessions: HashMap<String, Session>,
+    /// A team's managers, by session ID, kept apart from the user's own sessions
+    managers: HashMap<String, Manager>,
     /// Requests held for an answer, by request ID.
     held: HashMap<String, Held>,
     /// Held requests that were settled some other way (see `release`), whose hooks are still waiting and should be told
@@ -187,6 +279,12 @@ impl Sessions {
         let request = event["request_id"].as_str();
         let tool = event["tool_name"].as_str().unwrap_or_default();
         let detail = event["detail"].as_str().unwrap_or_default();
+        if event["team"].is_string() {
+            if name != "SessionEnd" {
+                self.managers.entry(id.to_string()).or_default().apply(event);
+            }
+            return None;
+        }
         if name == "SessionEnd" {
             self.sessions.remove(id);
             self.release(|h| h.session == id);
@@ -555,8 +653,39 @@ impl Sessions {
     }
 
     /// The process that last ran one of a session's hooks (see hooks.rs `keep`).
+    /// A team's manager, as far as its hooks have told us.
+    pub fn manager(&self, id: &str) -> Option<&Manager> {
+        self.managers.get(id)
+    }
+
+    /// Forget a team's manager, once its run is cleared away.
+    pub fn forget_manager(&mut self, id: &str) {
+        self.managers.remove(id);
+    }
+
     pub fn hook_parent(&self, id: &str) -> Option<i32> {
-        self.sessions.get(id)?.hook_parent
+        match self.sessions.get(id) {
+            Some(s) => s.hook_parent,
+            None => self.managers.get(id)?.hook_parent,
+        }
+    }
+
+    /// How a user's session is getting on, for the planner to show its team's lead: working (and on what), asking
+    /// something, or done.
+    pub fn state_of(&self, id: &str) -> Option<Value> {
+        let s = self.sessions.get(id)?;
+        let state = match s.status {
+            Status::Working => "working",
+            Status::Permission | Status::Question => "needs-you",
+            _ if s.chat.unwrap_or_default().needs_you => "needs-you",
+            _ => "done",
+        };
+        let doing = match s.status {
+            Status::Working => s.activity.clone(),
+            Status::Permission | Status::Question => s.request.as_ref().map(|(_, detail)| detail.clone()),
+            _ => s.last.clone(),
+        };
+        Some(json!({ "state": state, "doing": doing, "title": s.title.clone().unwrap_or_else(|| s.name()) }))
     }
 
     /// The bundle ID of the app a session runs in, when the hook could tell.
@@ -876,6 +1005,33 @@ mod tests {
 
     fn status(sessions: &Sessions) -> Status {
         sessions.sessions["s1"].status
+    }
+
+    #[test]
+    fn a_teams_manager_and_its_workers_are_followed_apart_from_the_users_sessions() {
+        let mut sessions = Sessions::default();
+        let team = |name: &str, extra: Value| {
+            let mut e = event(name, extra);
+            e["team"] = json!("team-1:dev");
+            e
+        };
+        sessions.apply(&team("UserPromptSubmit", json!({})));
+        let edit = json!({ "tool_name": "Edit", "detail": "/a/src/app.ts", "worker": "coder" });
+        sessions.apply(&team("PostToolUse", edit));
+        let manager = sessions.manager("s1").unwrap().to_json();
+        assert_eq!(manager["workers"]["coder"]["working"], true);
+        assert_eq!(manager["workers"]["coder"]["activity"], "Edited app.ts");
+
+        sessions.apply(&team("PostToolUse", json!({ "tool_name": "Agent", "handed": "coder", "said": "Done" })));
+        let manager = sessions.manager("s1").unwrap().to_json();
+        assert_eq!(manager["workers"]["coder"]["working"], false);
+        assert_eq!(manager["workers"]["coder"]["finished"], 1);
+        assert_eq!(manager["workers"]["coder"]["said"], "Done");
+
+        // Never one of the user's own: not listed, not counted, and nothing to tell them
+        assert!(sessions.apply(&team("Stop", json!({ "last_assistant_message": "All done" }))).is_none());
+        assert!(!sessions.sessions.contains_key("s1"));
+        assert_eq!(sessions.waiting(), (0, 0));
     }
 
     #[test]
