@@ -1955,19 +1955,8 @@ fn start_team(
     let run = format!("team-{}", Local::now().timestamp_millis());
     let mut members = vec![];
     for m in &managers {
-        let (app, run_id, agent) = (state.app.clone(), run.clone(), m.agent.clone());
-        let done = move |result| team_member_done(&app, &run_id, &agent, result);
-        let started = team::start(&run, m, Path::new(&cwd), done);
-        match started {
-            Ok((pid, session)) => members.push(team::Member {
-                agent: m.agent.clone(),
-                name: m.name.clone(),
-                model: m.model.clone(),
-                session,
-                pid: Some(pid),
-                state: team::State::Working,
-                workers: m.workers.clone(),
-            }),
+        match start_member(&state, &run, m, &cwd) {
+            Ok(member) => members.push(member),
             Err(e) => {
                 // All or none: the ones that did start are stopped
                 members.iter().filter_map(|m| m.pid).for_each(team::stop);
@@ -1979,6 +1968,70 @@ fn start_team(
     state.teams.lock().unwrap().runs.push(team::Run { id: run.clone(), plan, name, lead, started, members });
     changed(&state);
     Ok(run)
+}
+
+/// Start one of a team's managers, in the lead's folder, with its report going to the lead when it's done.
+fn start_member(state: &State, run: &str, m: &team::Manager, cwd: &str) -> Result<team::Member, String> {
+    let (app, run_id, agent) = (state.app.clone(), run.to_string(), m.agent.clone());
+    let done = move |result| team_member_done(&app, &run_id, &agent, result);
+    let (pid, session) = team::start(run, m, Path::new(cwd), done)?;
+    Ok(team::Member {
+        agent: m.agent.clone(),
+        name: m.name.clone(),
+        model: m.model.clone(),
+        session,
+        pid: Some(pid),
+        state: team::State::Working,
+        workers: m.workers.clone(),
+    })
+}
+
+/// A team at work, changed in the planner: the plan it follows now, once the changes have gone to whoever they're for.
+#[tauri::command]
+fn update_team_plan(run: String, plan: Value, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    let mut teams = state.teams.lock().unwrap();
+    let r = teams.runs.iter_mut().find(|r| r.id == run).ok_or("That team isn't running any more")?;
+    r.plan = plan;
+    Ok(())
+}
+
+/// A manager added to a team at work: started now, on the same work, reporting to the same lead.
+#[tauri::command]
+fn add_manager(run: String, manager: Value, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    let m = team::Manager::from(&manager)?;
+    team::valid(&m)?;
+    let lead = {
+        let teams = state.teams.lock().unwrap();
+        let r = teams.runs.iter().find(|r| r.id == run).ok_or("That team isn't running any more")?;
+        if r.members.iter().any(|x| x.agent == m.agent) {
+            return Err(format!("{} is already on the team", m.name));
+        }
+        r.lead.clone()
+    };
+    let (cwd, _) = state.sessions.lock().unwrap().place(&lead).ok_or("Headroom doesn't know the lead's chat any more")?;
+    let member = start_member(&state, &run, &m, &cwd)?;
+    let mut teams = state.teams.lock().unwrap();
+    match teams.runs.iter_mut().find(|r| r.id == run) {
+        Some(r) => r.members.push(member),
+        None => member.pid.into_iter().for_each(team::stop),
+    }
+    changed(&state);
+    Ok(())
+}
+
+/// One of a team's managers taken off it: stopped, and whatever it's running with it.
+#[tauri::command]
+fn stop_member(run: String, agent: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    let mut teams = state.teams.lock().unwrap();
+    let r = teams.runs.iter_mut().find(|r| r.id == run).ok_or("That team isn't running any more")?;
+    let m = r.members.iter_mut().find(|m| m.agent == agent).ok_or("That manager isn't on the team")?;
+    if let Some(pid) = m.pid.take() {
+        team::stop(pid);
+    }
+    if m.state == team::State::Working {
+        m.state = team::State::Stopped;
+    }
+    Ok(())
 }
 
 /// A manager's done: its report goes to the lead's chat, like a message from the list, and the user hears about it.
@@ -3852,6 +3905,9 @@ fn main() {
             teams,
             message_manager,
             clear_team,
+            update_team_plan,
+            add_manager,
+            stop_member,
             export_plan,
             plan_file,
             plan_path,

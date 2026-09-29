@@ -15,6 +15,7 @@ import { bridge, type TeamRun } from "./bridge";
 import { SpokenField } from "./Voice";
 import { changes, checkTeam, type Change } from "./planChanges";
 import { LivePanel, liveOf, RunBar } from "./Running";
+import { SteerPanel } from "./Steer";
 import { keepShare, savedShare, ShareSheet, TogetherPanel, type Said, type Share } from "./Together";
 import "./plan.css";
 import "./popover.css";
@@ -83,7 +84,7 @@ export function problems(plan: Plan): string[] {
 }
 
 /** The managers whose teams an agent is in: the ones it's reached from without passing through the lead. */
-function teamOf(plan: Plan, id: string): string[] {
+export function teamOf(plan: Plan, id: string): string[] {
   const byId = (x: string) => plan.agents.find((a) => a.id === x);
   const found = new Set<string>();
   const seen = new Set<string>();
@@ -107,7 +108,7 @@ const clause = (s: string) => lower(s.trim().replace(/[.!\s]+$/, ""));
 export const list = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 /** What's said about one agent: what it's for, what it waits for, how it loops, and what it may use. */
-function describe(plan: Plan, a: Agent) {
+export function describe(plan: Plan, a: Agent) {
   const byId = (id: string) => plan.agents.find((x) => x.id === id)!;
   const waits = plan.edges.filter((e) => e.to === a.id && !e.loop && byId(e.from).role === "Worker").map((e) => byId(e.from).name);
   const parts = [a.brief.trim() ? `${clause(a.brief)}.` : ""];
@@ -118,7 +119,9 @@ function describe(plan: Plan, a: Agent) {
   }
   if (a.until) parts.push(`It keeps going until ${clause(a.until)}.`);
   if (a.commands.length) parts.push(`It may use ${list(a.commands)}.`);
-  return parts.filter(Boolean).join(" ");
+  const said = parts.filter(Boolean).join(" ");
+  // Its own words went in mid-sentence, so they start lower case; as the start of what it's told, they don't
+  return said.charAt(0).toUpperCase() + said.slice(1);
 }
 
 /** The workers in the order their work flows: each after the workers that hand it theirs. */
@@ -178,7 +181,7 @@ const TOOL_NAMES: Record<string, string[]> = {
   "Run commands": ["Bash"],
   "Browse the web": ["WebFetch", "WebSearch"],
 };
-const toolNames = (tools: string[]) => [...new Set(tools.flatMap((t) => TOOL_NAMES[t] ?? []))];
+export const toolNames = (tools: string[]) => [...new Set(tools.flatMap((t) => TOOL_NAMES[t] ?? []))];
 
 /** A manager to start as a session of its own (see team.rs). */
 export type Launch = {
@@ -290,6 +293,7 @@ export function Canvas({
   onConnect,
   live,
   rounds,
+  changed = [],
 }: {
   agents: Agent[];
   edges: Edge[];
@@ -306,6 +310,8 @@ export function Canvas({
   live?: Record<string, { status: string; doing: string }>;
   /** While it runs, the round each loop's on, by arrow */
   rounds?: Record<string, number>;
+  /** Agents changed on a team at work, and not sent to it yet */
+  changed?: string[];
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [wire, setWire] = useState<{ from: string; x: number; y: number } | null>(null);
@@ -513,7 +519,9 @@ export function Canvas({
             {agents.map((n) => (
               <div
                 key={n.id}
-                className={["grid-node", n.role.toLowerCase(), live?.[n.id]?.status, picked(n.id) && "selected"].filter(Boolean).join(" ")}
+                className={["grid-node", n.role.toLowerCase(), live?.[n.id]?.status, picked(n.id) && "selected", changed.includes(n.id) && "changed"]
+                  .filter(Boolean)
+                  .join(" ")}
                 style={{ left: n.x, top: n.y, width: W, height: H }}
                 onPointerDown={(e) => {
                   // Panning, the grid has it
@@ -1056,6 +1064,31 @@ export function PlannerWindow() {
   const watching = !!run && editing !== run.id;
   const live = run && watching ? liveOf(run) : undefined;
   const busy = !!run?.members.some((m) => m.state === "working");
+  // Changing the team as it works (see Steer.tsx): the plan as the user's changing it, till it's sent or let go
+  const [changeMode, setChangeMode] = useState(false);
+  const [draft, setDraft] = useState<Plan | null>(null);
+  const changing = !!run && !!draft && watching && changeMode && busy;
+  const steerTo = (on: boolean) => {
+    setChangeMode(on);
+    setSelected(null);
+    if (on && run && !draft) setDraft(structuredClone(run.plan));
+  };
+  const draftAgent = (a: Agent) => draft && setDraft({ ...draft, agents: draft.agents.map((x) => (x.id === a.id ? a : x)) });
+  const draftRemove = () => {
+    if (!draft || !selected || draft.agents.find((a) => a.id === selected)?.role === "Lead") return;
+    const agents = draft.agents.filter((a) => a.id !== selected);
+    const edges = draft.edges.filter((x) => edgeId(x) !== selected && x.from !== selected && x.to !== selected);
+    setDraft({ ...draft, agents, edges });
+    setSelected(null);
+  };
+  const draftAdd = () => {
+    if (!draft) return;
+    const y = Math.max(0, ...draft.agents.map((a) => a.y)) + 120;
+    const a = agent("worker", 40, y);
+    setDraft({ ...draft, agents: [...draft.agents, a] });
+    setSelected(a.id);
+  };
+  const changedIds = run && draft ? [...new Set(changes(run.plan, draft).flatMap((c) => (c.agent ? [c.agent] : [])))] : [];
   // Asked, from the list, to follow a team while the planner's open
   const follow = useRef<(id: string) => void>(() => {});
   follow.current = (id) => {
@@ -1238,8 +1271,14 @@ export function PlannerWindow() {
       else setOpening(!opening);
       return;
     }
-    // Following a team, the grid's the plan as it started, which isn't for editing
-    if (watching || (e.target as Element).closest("input, textarea")) return;
+    if ((e.target as Element).closest("input, textarea")) return;
+    // Changing a team at work, it's that team that's being changed
+    if (changing && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      return draftRemove();
+    }
+    // Following a team, the grid's the plan as it's running, which isn't for editing
+    if (watching) return;
     if (e.metaKey && key === "z" && shared) {
       e.preventDefault();
       undo();
@@ -1289,11 +1328,7 @@ export function PlannerWindow() {
       <div className="plan-toolbar" data-tauri-drag-region>
         <input className="template-name" value={plan.name} onChange={(e) => change({ ...plan, name: e.target.value })} title="Rename it" />
         <span className="plan-sub">
-          {[
-            shared ? "Saves as you go" : saved ? plan.updated && `Saved ${ago(plan.updated)}` : "Edited",
-            `${plan.agents.length} agents`,
-            counts,
-          ]
+          {[shared ? "Saves as you go" : saved ? plan.updated && `Saved ${ago(plan.updated)}` : "Edited", `${plan.agents.length} agents`, counts]
             .filter(Boolean)
             .join(" · ")}
         </span>
@@ -1396,7 +1431,16 @@ export function PlannerWindow() {
           Add to a Chat…
         </button>
       </div>
-      {run && <RunBar run={run} watching={watching} onWatch={(watch) => setEditing(watch ? null : run.id)} onStopped={loadRuns} />}
+      {run && (
+        <RunBar
+          run={run}
+          watching={watching}
+          changing={changing}
+          onWatch={(watch) => setEditing(watch ? null : run.id)}
+          onChange={steerTo}
+          onStopped={loadRuns}
+        />
+      )}
       {runs
         .filter((r) => r.id !== run?.id && r.members.some((m) => m.state === "working"))
         .map((r) => (
@@ -1412,7 +1456,33 @@ export function PlannerWindow() {
         ))}
       {problem && <div className="plan-issues">{problem}</div>}
       {issues.length > 0 && !watching && <div className="plan-issues">{issues.join(" ")}</div>}
-      {run && live ? (
+      {run && changing && draft ? (
+        <div className="plan-body">
+          <Canvas
+            agents={draft.agents}
+            edges={draft.edges}
+            selected={selected}
+            onSelect={setSelected}
+            onMove={(moves) => setDraft({ ...draft, agents: draft.agents.map((a) => (moves[a.id] ? { ...a, ...moves[a.id] } : a)) })}
+            onConnect={(from, to) => {
+              if (draft.edges.some((e) => e.from === from && e.to === to) || makesCircle(draft.edges, from, to)) return;
+              setDraft({ ...draft, edges: [...draft.edges, { from, to }] });
+            }}
+            changed={changedIds}
+          />
+          {selected ? (
+            <Inspector
+              plan={draft}
+              selected={selected}
+              onAgent={draftAgent}
+              onEdge={(e) => setDraft({ ...draft, edges: draft.edges.map((x) => (edgeId(x) === edgeId(e) ? e : x)) })}
+              onDelete={draftRemove}
+            />
+          ) : (
+            <SteerPanel run={run} draft={draft} onAgent={draftAdd} onSent={loadRuns} onDiscard={() => setDraft(structuredClone(run.plan))} />
+          )}
+        </div>
+      ) : run && live ? (
         <div className="plan-body">
           <Canvas agents={run.plan.agents} edges={run.plan.edges} selected={selected} onSelect={setSelected} live={live.live} rounds={live.rounds} />
           <LivePanel run={run} selected={selected} />

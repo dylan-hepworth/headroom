@@ -881,3 +881,18 @@ html.browser body:has(.planner) {
   font-size: 11px;
   color: var(--pop-text-3);
 }
+
+/* Changing a team at work (see Steer.tsx) */
+.steer-mode {
+  width: 150px;
+}
+.grid-node.changed {
+  outline: 1.5px dashed var(--pop-accent);
+  outline-offset: 4px;
+}
+.steer-changes {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}

@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { Avatar } from "./Avatar";
 import { bridge, type TeamRun } from "./bridge";
 import { Markdown } from "./markdown";
-import { edgeId, list, teamFor, type Plan } from "./Planner";
+import { edgeId, list, teamFor, teamOf, type Plan } from "./Planner";
 import { SpokenField } from "./Voice";
 
 export type Status = "working" | "needs-you" | "done" | "waiting" | "stopped" | "failed";
@@ -87,6 +87,13 @@ export function liveOf(run: TeamRun): { live: Record<string, AgentLive>; rounds:
     }
   }
 
+  // Workers given to a manager while it worked: it runs them as general-purpose subagents, which Headroom can't tell
+  // apart, so they show how their manager's getting on
+  for (const a of plan.agents) {
+    const m = a.role === "Worker" && !live[a.id] ? run.members.find((x) => x.agent === teamOf(plan, a.id)[0]) : undefined;
+    if (m) live[a.id] = { kind: "worker", member: m, status: m.state, doing: `Added while it worked: ${m.name} runs it` };
+  }
+
   const lead = plan.agents.find((a) => a.role === "Lead");
   if (lead) {
     const busy = run.members.filter((m) => m.state === "working").map((m) => m.name);
@@ -127,12 +134,17 @@ function since(ms: number) {
 export function RunBar({
   run,
   watching,
+  changing,
   onWatch,
+  onChange,
   onStopped,
 }: {
   run: TeamRun;
   watching: boolean;
+  /** Changing the team as it works (see Steer.tsx), rather than following it */
+  changing: boolean;
   onWatch: (watch: boolean) => void;
+  onChange: (changing: boolean) => void;
   onStopped: () => void;
 }) {
   const { live } = liveOf(run);
@@ -152,6 +164,16 @@ export function RunBar({
         on {run.leadState?.title ?? "its chat"} · {since(run.started)} · {counts}
       </span>
       <span className="ask-spacer" />
+      {watching && active && (
+        <div className="segmented steer-mode">
+          <button className={changing ? "" : "on"} onClick={() => onChange(false)}>
+            Follow
+          </button>
+          <button className={changing ? "on" : ""} onClick={() => onChange(true)} title="Change the team while it works">
+            Change
+          </button>
+        </div>
+      )}
       <button className="ask-btn ghost" onClick={() => onWatch(!watching)}>
         {watching ? "Edit the Plan" : "Follow the Team"}
       </button>

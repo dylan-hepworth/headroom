@@ -1374,6 +1374,10 @@ fn keep(event: &Value) -> Value {
             }
         } else if let Some(worker) = event["tool_input"]["subagent_type"].as_str() {
             out.insert("handed".into(), worker.into());
+            // The model it was handed to, when the manager picked one: how a change to a worker's model mid-run shows
+            if let Some(model) = event["tool_input"]["model"].as_str() {
+                out.insert("model".into(), model.into());
+            }
             if let Some(said) = subagent_result(&event["tool_response"]) {
                 out.insert("said".into(), clip(&said).into());
             }
