@@ -92,9 +92,16 @@ const ASK_NOTE: &str =
     question, with two to four short options, and make the last one \"That's all for now\". Ask anything else you need \
     from them the same way, rather than in plain text.";
 
-/// Added to it in hands-free mode, where the user follows along in the popover rather than the chat.
-const HANDS_FREE_NOTE: &str = "The user reads your reply in Headroom's panel rather than the chat, so before you \
-    ask, end with a short markdown summary of what you did and anything they should look over.";
+/// Instead, when Claude only asks what's next when there's something to decide: otherwise it ends its turn with the
+/// whole of what it has to say, and the user answers that from Headroom.
+const ASK_WHEN_NEEDED_NOTE: &str = "Headroom: ask the user with the AskUserQuestion tool only when you need them to \
+    decide something: one question, with two to four short options, the last one \"That's all for now\". When you're \
+    telling them something, or you're done, end your turn with your full answer rather than a question; they can reply \
+    from Headroom. This replaces any earlier Headroom note to always ask.";
+
+/// Added to either in hands-free mode, where the user follows along in the popover rather than the chat.
+const HANDS_FREE_NOTE: &str = "The user reads your reply in Headroom's panel rather than the chat, so end with a \
+    short markdown summary of what you did and anything they should look over.";
 
 /// What Claude is told when a turn ends without the question, and it goes back to ask.
 const ASK_NUDGE: &str = "Headroom: before you stop, ask the user what to do next with the AskUserQuestion tool. Ask \
@@ -277,6 +284,13 @@ fn asking() -> Option<bool> {
     }
 }
 
+/// Does Claude always ask what's next, rather than only when there's something to decide? Only then is a turn that
+/// ends without the question sent back to ask.
+fn asking_always() -> bool {
+    let Some(config) = approvals_path().and_then(|p| fs::read_to_string(p).ok()) else { return false };
+    serde_json::from_str::<Value>(&config).is_ok_and(|c| c["always"] == true)
+}
+
 /// Is Claude Code waiting for this run of the hook? Only then does anything it says change the turn it's for. A session
 /// keeps the hooks it started with, so one from before approvals were on runs them without waiting.
 fn waited_on() -> bool {
@@ -324,7 +338,8 @@ fn ask_note(name: &str, event: &Value) -> Option<String> {
             // A new message, so being sent back to ask starts over
             let _ = fs::create_dir_all(file.parent()?);
             fs::write(&file, "{}").ok()?;
-            Some(if hands_free() { format!("{ASK_NOTE} {HANDS_FREE_NOTE}") } else { ASK_NOTE.into() })
+            let note = if asking_always() { ASK_NOTE } else { ASK_WHEN_NEEDED_NOTE };
+            Some(if hands_free() { format!("{note} {HANDS_FREE_NOTE}") } else { note.into() })
         }
         // Removing the file is the check, so a session is only told once. One that's lost its file (resumed after a
         // long while, or as a fork) goes by whether its own transcript has the note since it was last told.
@@ -339,15 +354,16 @@ fn ask_note(name: &str, event: &Value) -> Option<String> {
 /// Does the end of this transcript have the note to ask what's next, and no word to stop after it?
 fn still_asking(transcript: &Path) -> bool {
     let Some(tail) = tail(transcript) else { return false };
-    let asked = tail.rfind(&ASK_NOTE[..40]);
+    let asked = tail.rfind(&ASK_NOTE[..40]).max(tail.rfind(&ASK_WHEN_NEEDED_NOTE[..40]));
     asked.is_some() && asked > tail.rfind(&STOP_ASKING_NOTE[..40])
 }
 
-/// Is hands-free mode on? Only along with asking what's next, and while Headroom is running.
+/// Is hands-free mode on, and Headroom running to answer from?
 fn hands_free() -> bool {
     let Some(config) = approvals_path().and_then(|p| fs::read_to_string(p).ok()) else { return false };
     let Ok(config) = serde_json::from_str::<Value>(&config) else { return false };
-    asking() == Some(true) && config["hands_free"] == true
+    let alive = config["at"].as_i64().is_some_and(|at| chrono::Utc::now().timestamp_millis() - at < APP_ALIVE_MS);
+    alive && config["hands_free"] == true
 }
 
 /// Where a held question's conversation is kept while it waits (see `save_context`).
@@ -654,6 +670,7 @@ fn nudge(event: &Value) -> Option<&'static str> {
     // background, or on a loop's next run, isn't finished.
     let waiting_on_work = |key: &str| event[key].as_array().is_some_and(|a| !a.is_empty());
     if asking() != Some(true)
+        || !asking_always()
         || !attended()
         || !waited_on()
         || event["permission_mode"] == "plan"
@@ -1002,6 +1019,8 @@ pub struct ForHooks {
     pub on: bool,
     pub hold: u64,
     pub ask: bool,
+    /// Claude always asks what's next, rather than only when there's something to decide
+    pub always: bool,
     /// Hands-free: a held question comes with what Claude said that turn, and what the user said last.
     pub hands_free: bool,
     pub open_chat: Option<String>,
@@ -1016,6 +1035,7 @@ pub fn write_approvals(app: &ForHooks) {
         "on": app.on,
         "hold": app.hold,
         "ask": app.ask,
+        "always": app.always,
         "hands_free": app.hands_free,
         "open_chat": app.open_chat,
         "front": app.front,

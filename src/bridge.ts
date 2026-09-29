@@ -124,8 +124,10 @@ export type Settings = {
   compactCards: boolean;
   /** The shortcut for talking to a chat from anywhere, as the app reads it ("Control+Alt+Space"), or null when off. */
   talkShortcut: string | null;
-  /** Does Claude end each turn by asking what's next, in the popover? */
-  askNext: boolean;
+  /** When Claude ends a turn by asking what's next, in the popover: only when it needs a decision, every time, or never */
+  askWhen: "decision" | "always" | "never";
+  /** Hands-free: does a finished turn's reply drop down from the menu bar, like a question? */
+  showReplies: boolean;
   /** Hands-free: each question comes with what Claude said that turn, to follow along from the popover. */
   handsFree: boolean;
   /** Alerts and requests paused from the menu: until a time ("4:10 PM"), or until resumed. Null when they aren't. */
@@ -558,7 +560,8 @@ const mock: AppState = {
     popoverAuto: true,
     compactCards: false,
     talkShortcut: "Control+Alt+Space",
-    askNext: false,
+    askWhen: "decision",
+    showReplies: true,
     handsFree: false,
     paused: { until: "4:10 PM" },
     paceArrows: true,

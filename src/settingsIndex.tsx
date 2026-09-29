@@ -194,10 +194,17 @@ export const SETTINGS: Setting[] = [
   },
   {
     pane: "hooks",
-    title: "Have Claude ask what's next",
+    title: "When Claude finishes a turn",
     tile: ["green", icon(Shield)],
     section: "Approvals",
-    words: "question next step keep going end of turn done finish follow up",
+    words: "ask what's next question next step keep going end of turn done finish follow up decision",
+  },
+  {
+    pane: "hooks",
+    title: "Show replies right away",
+    tile: ["green", icon(Shield)],
+    section: "Approvals",
+    words: "reply answer finished turn drop down card information panel",
   },
   {
     pane: "hooks",

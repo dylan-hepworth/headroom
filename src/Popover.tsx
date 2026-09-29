@@ -60,6 +60,22 @@ export type Ask =
       recent?: Recent[];
       /** What Claude's made this turn, to look at before answering */
       made?: Made[];
+    }
+  | {
+      /** Hands-free: a finished turn that didn't need a question, held open a while for a reply */
+      kind: "reply";
+      id: string;
+      session?: string;
+      title: string;
+      project: string;
+      until: number;
+      hold: number;
+      inChat?: boolean;
+      icon?: ChatIcon;
+      said?: string;
+      prompt?: string;
+      recent?: Recent[];
+      made?: Made[];
     };
 
 /** A card that's been answered, as it was, so it can show its receipt (or dissolve) even after the request is gone
@@ -163,6 +179,12 @@ function describe(tool: string): { verb: string; glyph: ReactNode } {
       return { verb: `use ${tool}`, glyph: glyph(<path d="M8 2.5v11M2.5 8h11" />) };
   }
 }
+
+const REPLY_GLYPH = (
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6.5 4 3 7.5 6.5 11M3.5 7.5h6a3.5 3.5 0 0 1 3.5 3.5v1" />
+  </svg>
+);
 
 const QUESTION_GLYPH = (
   <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
@@ -291,7 +313,11 @@ function Header({ ask, glyph }: { ask: Ask; glyph: ReactNode }) {
             <span className="ask-project-name">{ask.project}</span>
           </span>
           <span className={left < RED_ZONE * ask.hold ? "ask-left urgent" : "ask-left"}>
-            {paused ? `paused at ${clock(left)}` : `${ask.inChat ? "chat" : "terminal"} in ${clock(left)}`}
+            {paused
+              ? `paused at ${clock(left)}`
+              : ask.kind === "reply"
+                ? `waits ${clock(left)}`
+                : `${ask.inChat ? "chat" : "terminal"} in ${clock(left)}`}
           </span>
         </div>
       </div>
@@ -451,6 +477,70 @@ function QuestionCard({
         )}
         <button className="ask-btn primary" disabled={!answered} onClick={next}>
           {last ? "Send" : "Next"} <kbd>↩</kbd>
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Hands-free: a finished turn that didn't need a question, held open a while for a reply. What Claude said, all of it,
+ *  and a box to answer in; what's written goes straight to the chat. */
+function ReplyCard({
+  ask,
+  answer,
+  attach,
+}: {
+  ask: Extract<Ask, { kind: "reply" }>;
+  answer: (choice: string) => void;
+  attach: (image: string) => Promise<string>;
+}) {
+  const [text, setText] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [problem, setProblem] = useState("");
+  const [sending, setSending] = useState(false);
+  const empty = !text.trim() && images.length === 0;
+  const send = async () => {
+    if (sending || empty) return;
+    setSending(true);
+    setProblem("");
+    try {
+      // All a session can take from here is words, so the images go where Claude can read them
+      const paths = await Promise.all(images.map(attach));
+      answer(`reply:${[text.trim(), ...paths.map((path) => `see the image at ${path}`)].filter(Boolean).join(", ")}`);
+    } catch (e) {
+      setProblem(`Couldn't send it: ${e instanceof Error ? e.message : String(e)}`);
+      setSending(false);
+    }
+  };
+  return (
+    <>
+      <Header ask={ask} glyph={REPLY_GLYPH} />
+      <Conversation said={ask.said} prompt={ask.prompt} recent={ask.recent} made={ask.made} />
+      <OtherAnswer
+        placeholder={`Reply to ${ask.title}`}
+        value={text}
+        onChange={setText}
+        images={images}
+        onImages={setImages}
+        onAddImages={(more) => setImages((now) => [...now, ...more])}
+        onSend={send}
+      />
+      {problem && <div className="ask-problem">{problem}</div>}
+      <div className="ask-buttons">
+        <OpenButton ask={ask} onOpen={() => answer("chat")} />
+        <span className="ask-spacer" />
+        <button
+          className="ask-btn ghost"
+          title="Nothing's sent, and it comes off the list"
+          onClick={() => {
+            if (ask.session) bridge.markSeen([ask.session]);
+            answer("terminal");
+          }}
+        >
+          That's All for Now
+        </button>
+        <button className="ask-btn primary" disabled={sending || empty} onClick={send}>
+          Send <kbd>↩</kbd>
         </button>
       </div>
     </>
@@ -885,6 +975,7 @@ function receipt(choice: string, failed: boolean | undefined, place: string): { 
   if (choice === "session") return { text: "Allowed for this session", good: true };
   if (choice === "deny") return { text: "Denied", good: false };
   if (choice === "terminal") return { text: "Sent to the terminal", good: true };
+  if (choice.startsWith("reply:")) return { text: "Sent", good: true };
   return { text: "Answer sent", good: true };
 }
 
@@ -1255,6 +1346,8 @@ export function Popover({
     if (e.key === "ArrowRight") return go(1);
     if (e.key === "ArrowLeft") return go(-1);
     if (!top || onButton) return;
+    // A reply's written in its box, which has the keys
+    if (top.kind === "reply") return;
     if (top.kind === "question") {
       if (e.key === "Enter") nextQuestion(top);
       // A compact card's options have number keys
@@ -1307,7 +1400,9 @@ export function Popover({
       <Receipt choice={done.choice} failed={done.failed} place={ask.inChat ? "chat" : "terminal"} />
     ) : (
       <>
-        {isCompact(ask) ? (
+        {ask.kind === "reply" ? (
+          <ReplyCard ask={ask} answer={answer} attach={onAttach} />
+        ) : isCompact(ask) ? (
           ask.kind === "permission" ? (
             <CompactPermission
               ask={ask}
@@ -1690,6 +1785,28 @@ export const PREVIEW_PICTURE: ChatIcon = {
 export function PopoverPreview() {
   const now = Date.now();
   const [asks, setAsks] = useState<Ask[]>([
+    // `?reply`: a finished turn that just told the user something, held open for a reply
+    ...(location.search.includes("reply")
+      ? [
+          {
+            kind: "reply" as const,
+            id: "r",
+            session: "c",
+            title: "Blog redesign",
+            project: "blog",
+            said: "The archive keeps its old layout because its year headings are built by `archive.njk`, which the new theme never replaced. Three things differ from the other pages:\n\n| | Home and posts | Archive |\n| --- | --- | --- |\n| Template | `base.njk` | `archive.njk` |\n| Headings | Post titles | Years, sticky |\n| Width | 680 px | 960 px |\n\nMoving it over is about an hour: a new partial for the year headings, and the width from the theme. Nothing else depends on the old template.",
+            prompt: "Why does the archive still look like the old site?",
+            recent: [
+              { kind: "said" as const, text: "Why does the archive still look like the old site?" },
+              { kind: "did" as const, text: "Read 4 files, searched the code" },
+            ],
+            made: [{ path: "/Users/me/Code/blog/notes/archive.md", kind: "doc" as const, name: "archive.md" }],
+            until: now + 102_000,
+            hold: 120_000,
+            inChat: true,
+          },
+        ]
+      : []),
     {
       kind: "permission",
       id: "a",

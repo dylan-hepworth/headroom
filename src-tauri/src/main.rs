@@ -372,6 +372,10 @@ struct State {
     compact_cards: Mutex<bool>,
     /// "Have Claude ask what's next": Claude ends each turn by asking, in the popover (see hooks.rs).
     ask_next: Mutex<bool>,
+    /// Claude always asks what's next, rather than only when it needs a decision
+    ask_always: Mutex<bool>,
+    /// Hands-free, a finished turn's reply drops down from the menu bar, like a question
+    show_replies: Mutex<bool>,
     /// Hands-free, with it: each question comes with what Claude said that turn, to read in the popover.
     hands_free: Mutex<bool>,
     /// Show whether each limit is ahead of or behind its window, as an arrow in the menu bar and in Settings' rings.
@@ -2622,7 +2626,12 @@ fn get_state(state: tauri::State<Arc<State>>) -> Value {
             "popoverAuto": *state.popover_auto.lock().unwrap(),
             "compactCards": *state.compact_cards.lock().unwrap(),
             "talkShortcut": state.talk_shortcut.lock().unwrap().clone(),
-            "askNext": *state.ask_next.lock().unwrap(),
+            "askWhen": match (*state.ask_next.lock().unwrap(), *state.ask_always.lock().unwrap()) {
+                (false, _) => "never",
+                (true, true) => "always",
+                (true, false) => "decision",
+            },
+            "showReplies": *state.show_replies.lock().unwrap(),
             "handsFree": *state.hands_free.lock().unwrap(),
             "paused": match *state.paused.lock().unwrap() {
                 Some(Paused::Until(until)) if Local::now() < until => json!({ "until": fmt_when(until) }),
@@ -2762,10 +2771,24 @@ fn set_setting(key: String, value: Value, state: tauri::State<Arc<State>>) -> Re
             sync_popover(&state);
             changed(&state);
         }
-        "askNext" => {
+        "showReplies" => {
             let on = value.as_bool().ok_or_else(bad)?;
+            *state.show_replies.lock().unwrap() = on;
+            store_setting(&state, "show_replies", if on { "on" } else { "off" });
+            sync_popover(&state);
+            changed(&state);
+        }
+        "askWhen" => {
+            let (on, always) = match value.as_str() {
+                Some("decision") => (true, false),
+                Some("always") => (true, true),
+                Some("never") => (false, false),
+                _ => return Err(bad()),
+            };
             *state.ask_next.lock().unwrap() = on;
+            *state.ask_always.lock().unwrap() = always;
             store_setting(&state, "ask_next", if on { "on" } else { "off" });
+            store_setting(&state, "ask_always", if always { "on" } else { "off" });
             // Hands-free goes with it
             if *state.hooks_on.lock().unwrap() {
                 install_hooks(&state)?;
@@ -2850,7 +2873,7 @@ fn set_setting(key: String, value: Value, state: tauri::State<Arc<State>>) -> Re
 fn messages_go_in(state: &State) -> bool {
     let note = state.near_limit.lock().unwrap().for_hooks();
     let (approvals, _) = *state.approvals.lock().unwrap();
-    let hands_free = *state.ask_next.lock().unwrap() && *state.hands_free.lock().unwrap();
+    let hands_free = *state.hands_free.lock().unwrap();
     *state.hooks_on.lock().unwrap() && ((note.near.is_some() && note.right_away) || (approvals && hands_free))
 }
 
@@ -2861,7 +2884,7 @@ fn install_hooks(state: &State) -> Result<(), String> {
     let note = state.near_limit.lock().unwrap().for_hooks();
     let (approvals, hold) = *state.approvals.lock().unwrap();
     // Hands-free, the hook after each tool call is waited for, so a message sent from the list can go in with it
-    let hands_free = *state.ask_next.lock().unwrap() && *state.hands_free.lock().unwrap();
+    let hands_free = *state.hands_free.lock().unwrap();
     hooks::install(&exe, &note, approvals.then_some(hold), hands_free)
 }
 
@@ -3108,11 +3131,12 @@ fn tell_hooks_about_approvals(state: &State) {
     // own prompt for now, rather than every session being told to stop and then to start again
     let on = approvals && hooks_on && !is_paused(state);
     let ask = approvals && hooks_on && *state.ask_next.lock().unwrap();
-    let hands_free = ask && *state.hands_free.lock().unwrap();
+    let always = *state.ask_always.lock().unwrap();
+    let hands_free = approvals && hooks_on && *state.hands_free.lock().unwrap();
     let open_chat = state.desktop.lock().unwrap().open_chat();
     let front = frontmost_app();
     *state.told_front.lock().unwrap() = front.clone();
-    hooks::write_approvals(&hooks::ForHooks { on, hold, ask, hands_free, open_chat, front });
+    hooks::write_approvals(&hooks::ForHooks { on, hold, ask, always, hands_free, open_chat, front });
 }
 
 /// The requests Headroom is holding for an answer, for the popover. None while approvals or the hooks are off: a hook
@@ -3122,7 +3146,9 @@ fn held_requests(state: &State) -> Vec<Value> {
         return vec![];
     }
     let extra = hooks::extra_time();
-    let held = state.sessions.lock().unwrap().held(hold_time(state), &extra);
+    // Hands-free, a finished turn held for a reply comes as a card of its own, when that's wanted
+    let replies = hands_free_on(state) && *state.show_replies.lock().unwrap();
+    let held = state.sessions.lock().unwrap().held(hold_time(state), &extra, replies);
     with_icons(state, held, "session")
 }
 
@@ -3394,13 +3420,10 @@ fn tray_clicked(tray: &TrayIcon, event: tauri::tray::TrayIconEvent) {
     }
 }
 
-/// Is hands-free really on: set, along with what it needs (approvals, the hooks, and asking what's next), and not paused?
+/// Is hands-free really on: set, along with what it needs (approvals and the hooks), and not paused?
 fn hands_free_on(state: &State) -> bool {
-    state.approvals.lock().unwrap().0
-        && *state.hooks_on.lock().unwrap()
-        && *state.ask_next.lock().unwrap()
-        && *state.hands_free.lock().unwrap()
-        && !is_paused(state)
+    let on = state.approvals.lock().unwrap().0 && *state.hooks_on.lock().unwrap();
+    on && *state.hands_free.lock().unwrap() && !is_paused(state)
 }
 
 /// What's waiting on the user, for the list (see sessions.rs `pending`).
@@ -3678,6 +3701,9 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
     let compact_cards = load_setting(&config_dir, "compact_cards").as_deref() == Some("on");
     // Off until turned on, unlike the settings `on` reads
     let ask_next = load_setting(&config_dir, "ask_next").as_deref() == Some("on");
+    // Asking only when there's something to decide, unless always was picked
+    let ask_always = load_setting(&config_dir, "ask_always").as_deref() == Some("on");
+    let show_replies = load_setting(&config_dir, "show_replies").as_deref() != Some("off");
     let hands_free = load_setting(&config_dir, "hands_free").as_deref() == Some("on");
     let pace_arrows = load_setting(&config_dir, "pace_arrows").as_deref() == Some("on");
     let paused = load_paused(&config_dir);
@@ -3774,6 +3800,8 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         popover_auto: Mutex::new(popover_auto),
         compact_cards: Mutex::new(compact_cards),
         ask_next: Mutex::new(ask_next),
+        ask_always: Mutex::new(ask_always),
+        show_replies: Mutex::new(show_replies),
         hands_free: Mutex::new(hands_free),
         pace_arrows: Mutex::new(pace_arrows),
         paces: Mutex::new(vec![]),

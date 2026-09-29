@@ -133,7 +133,7 @@ When it's easier to show than to explain, your own answer can bring images along
   </picture>
 </p>
 
-Turn on **Have Claude ask what's next** as well, and Claude ends each turn by asking you what to do next, in the same panel, with **That's all for now** to let it stop. If a turn ends without the question, Headroom sends Claude back to ask it.
+**When Claude finishes a turn**, it can ask you what to do next, in the same panel, with **That's all for now** to let it stop. Set it to ask when it needs a decision, and Claude only asks when there's a choice to make: when it's telling you something, it gives you the whole answer instead of squeezing it into a question. Set it to always ask, and a turn that ends without the question is sent back to ask it.
 
 <br>
 
@@ -152,7 +152,7 @@ If the cards are more than you want on screen, turn on **Compact cards** (Settin
 
 ### Hands-free
 
-Add **Hands-free** to asking what's next, and you can keep your sessions going from the menu bar without opening a chat. Each question comes with what Claude said that turn, scrolling if it's long. **Recent** shows what's gone on lately instead: your messages and answers, Claude's updates, and what it did in between ("Ran 3 commands, edited 2 files"), put together by Headroom from the session's transcript, so it costs no tokens. Claude is asked to end with a short summary of what it did, which is all it writes extra.
+Turn on **Hands-free**, and you can keep your sessions going from the menu bar without opening a chat. A turn that ends with an answer rather than a question drops down too, with all of Claude's reply and a box to write back in, so you can keep going without a prompt (turn off **Show replies right away** to have it wait in the list). Each question comes with what Claude said that turn, scrolling if it's long. **Recent** shows what's gone on lately instead: your messages and answers, Claude's updates, and what it did in between ("Ran 3 commands, edited 2 files"), put together by Headroom from the session's transcript, so it costs no tokens. Claude is asked to end with a short summary of what it did, which is all it writes extra.
 
 <p align="center">
   <picture>
@@ -320,7 +320,7 @@ Each request counts down to when it goes back to the terminal, 2 minutes unless 
 
 It only holds what Claude Code would have asked you about anyway, so requests your permission settings or mode already cover aren't held. Questions are held in any mode, including when Claude asks several at once. Plan approvals always stay in the terminal. Nothing is held while you're looking at the session, since you're probably watching its prompt: its terminal is in front, or its chat is the one open in the Claude app. A request from any other chat still comes to the panel.
 
-With **Have Claude ask what's next** on, each message you send carries a short note asking Claude to end its turn with that question, with **That's all for now** as the last choice. If a turn ends without it, Headroom's hook sends Claude back to ask. If Claude still doesn't, it's left alone until your next message. Sessions that are already open hear about it with your next message, as long as they started while approvals were on (others pick it up when they restart), and turning it off tells the ones that heard to stop. For this, Claude Code waits a moment for Headroom (about 20 milliseconds) on each message and at the end of each turn, while approvals are on.
+With **When Claude finishes a turn** set to ask, each message you send carries a short note saying when Claude should end its turn with that question, with **That's all for now** as the last choice: only when it needs a decision, or always. Set to always, if a turn ends without it, Headroom's hook sends Claude back to ask. If Claude still doesn't, it's left alone until your next message. Sessions that are already open hear about it with your next message, as long as they started while approvals were on (others pick it up when they restart), and turning it off tells the ones that heard to stop. For this, Claude Code waits a moment for Headroom (about 20 milliseconds) on each message and at the end of each turn, while approvals are on.
 
 </details>
 

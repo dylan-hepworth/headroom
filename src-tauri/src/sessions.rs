@@ -609,10 +609,11 @@ impl Sessions {
 
     /// The requests Headroom is holding for an answer, for the popover, oldest first. Not the finished turns held open
     /// for a reply: those wait quietly, for the list of what's pending (see `pending`).
-    pub fn held(&self, hold: chrono::Duration, extra: &HashMap<String, i64>) -> Vec<Value> {
+    /// With `replies`, a finished turn held open for a reply comes too, as a card of its own.
+    pub fn held(&self, hold: chrono::Duration, extra: &HashMap<String, i64>, replies: bool) -> Vec<Value> {
         let mut list: Vec<(DateTime<Local>, Value)> = self
             .live(hold, extra)
-            .filter(|(_, held, _)| !held.reply)
+            .filter(|(_, held, _)| replies || !held.reply)
             .map(|(id, held, until)| {
                 let session = &self.sessions[&held.session];
                 let project = project_name(&session.cwd);
@@ -626,6 +627,21 @@ impl Sessions {
                     "inChat": session.host_chat.is_some(),
                 });
                 match &held.questions {
+                    // A finished turn: what Claude said, to answer in words
+                    None if held.reply => {
+                        ask["kind"] = "reply".into();
+                        let named: Vec<String> = held.context.as_ref().map_or(vec![], |c| {
+                            let named = c["named"].as_array().into_iter().flatten();
+                            named.filter_map(|n| n.as_str().map(String::from)).collect()
+                        });
+                        ask["made"] = session.made.to_json(&named);
+                        // All of it, from the hook; the start of it, if that's all there is
+                        let context = held.context.clone().unwrap_or_default();
+                        let said = context["said"].as_str().filter(|s| !s.trim().is_empty()).map(String::from);
+                        ask["said"] = said.or_else(|| session.last.clone()).into();
+                        ask["prompt"] = context["prompt"].clone();
+                        ask["recent"] = context["recent"].clone();
+                    }
                     Some(questions) => {
                         ask["kind"] = "question".into();
                         // In the shape the popover takes: the log keeps each question's words as "text"
@@ -1292,10 +1308,10 @@ mod tests {
             "PermissionRequest",
             json!({ "tool_name": "Bash", "request_id": "r1", "can_session": true }),
         ));
-        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).len(), 1);
+        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).len(), 1);
         sessions.answered("r1");
         assert!(status(&sessions) == Status::Working);
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
     }
 
     #[test]
@@ -1304,7 +1320,7 @@ mod tests {
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r1" })));
         sessions.apply(&event("PermissionFallback", json!({ "request_id": "r1" })));
         assert!(status(&sessions) == Status::Permission);
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
     }
 
     #[test]
@@ -1314,7 +1330,7 @@ mod tests {
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r1", "at": old })));
         // The first was answered in the terminal and Claude asked again, with nothing logged in between
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r2" })));
-        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new());
+        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false);
         assert_eq!(asks.len(), 1);
         assert_eq!(asks[0]["id"], "r2");
     }
@@ -1325,7 +1341,7 @@ mod tests {
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r1" })));
         sessions.apply(&event("HeadroomAnswered", json!({ "request_id": "r1" })));
         assert!(status(&sessions) == Status::Working);
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
     }
 
     #[test]
@@ -1360,7 +1376,7 @@ mod tests {
         assert!(status(&sessions) == Status::Waiting);
         assert_eq!(sessions.kind_of("r1"), Some("reply"));
         // Not in the popover, or counted as needing an answer
-        assert!(sessions.held(chrono::Duration::minutes(10), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(10), &HashMap::new(), false).is_empty());
         assert_eq!(sessions.waiting(), (0, 1));
         // Letting go of it unanswered is nothing to tell anyone about
         let let_go = sessions.apply(&event("PermissionFallback", json!({ "request_id": "r1", "at": t0 + 600_000 })));
@@ -1376,7 +1392,7 @@ mod tests {
             json!({ "tool_name": "AskUserQuestion", "request_id": "q1", "questions": [question, question] }),
         ));
         assert!(status(&sessions) == Status::Question);
-        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new());
+        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false);
         assert_eq!(asks[0]["kind"], "question");
         // What the popover shows as the question
         assert_eq!(asks[0]["questions"][0]["question"], "Which?");
@@ -1387,7 +1403,7 @@ mod tests {
             "PreToolUse",
             json!({ "tool_name": "AskUserQuestion", "request_id": "q2", "question": question }),
         ));
-        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new());
+        let asks = sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false);
         assert_eq!(asks[1]["questions"][0]["question"], "Which?");
     }
 
@@ -1396,9 +1412,9 @@ mod tests {
         let mut sessions = Sessions::default();
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r1" })));
         sessions.apply(&event("PostToolUse", json!({ "tool_name": "Read", "detail": "a.rs" })));
-        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).len(), 1);
+        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).len(), 1);
         sessions.apply(&event("Stop", json!({})));
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
     }
 
     #[test]
@@ -1409,9 +1425,9 @@ mod tests {
             "PermissionRequest",
             json!({ "tool_name": "Bash", "request_id": "r1", "at": at, "hold": 60 }),
         ));
-        assert!(sessions.held(chrono::Duration::minutes(5), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(5), &HashMap::new(), false).is_empty());
         let extra = HashMap::from([("r1".to_string(), 60_000)]);
-        assert_eq!(sessions.held(chrono::Duration::minutes(5), &extra).len(), 1);
+        assert_eq!(sessions.held(chrono::Duration::minutes(5), &extra, false).len(), 1);
     }
 
     #[test]
@@ -1421,10 +1437,10 @@ mod tests {
         let pid = gone.id();
         let _ = { gone }.wait();
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r1", "pid": pid })));
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
         let me = std::process::id();
         sessions.apply(&event("PermissionRequest", json!({ "tool_name": "Bash", "request_id": "r2", "pid": me })));
-        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).len(), 1);
+        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).len(), 1);
     }
 
     #[test]
@@ -1436,9 +1452,9 @@ mod tests {
             json!({ "tool_name": "Bash", "detail": "npm test", "request_id": "r1", "pid": me }),
         ));
         sessions.apply(&event("PostToolUse", json!({ "tool_name": "Bash", "detail": "ls" })));
-        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).len(), 1);
+        assert_eq!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).len(), 1);
         sessions.apply(&event("PostToolUse", json!({ "tool_name": "Bash", "detail": "npm test" })));
-        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new()).is_empty());
+        assert!(sessions.held(chrono::Duration::minutes(2), &HashMap::new(), false).is_empty());
         assert_eq!(sessions.take_released(), vec!["r1".to_string()]);
         assert!(sessions.take_released().is_empty());
     }

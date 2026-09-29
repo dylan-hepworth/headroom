@@ -143,14 +143,21 @@ export default function Hooks({ app, settings, set }: PaneProps) {
           </Row>
           <Row
             inset
-            title="Have Claude ask what's next"
-            detail={`When Claude finishes, it asks what to do next, with a few choices to pick from right here. “That’s all for now” lets it stop.`}
-            info="Headroom adds a line to your messages asking Claude to do this, and if a turn ends without the question, sends Claude back to ask. Sessions that are already open hear about it with your next message, if they started while approvals were on (others, once they restart), and turning it off tells the ones that heard to stop. For this, Claude Code waits a moment for Headroom (about 20 milliseconds) on each message and at the end of each turn, while approvals are on."
+            title="When Claude finishes a turn"
+            detail={`Claude can ask what to do next, with a few choices to pick from right here, and “That’s all for now” to let it stop. Asking only when it needs a decision leaves it free to just tell you things, in full.`}
+            info="Headroom adds a line to your messages saying when Claude should ask. Set to always, a turn that ends without the question is sent back to ask. Sessions that are already open hear about it with your next message, if they started while approvals were on (others, once they restart), and turning it off tells the ones that heard to stop. For this, Claude Code waits a moment for Headroom (about 20 milliseconds) on each message and at the end of each turn, while approvals are on."
           >
-            <Switch
-              checked={settings.askNext}
-              onChange={(v) => set("askNext", v)}
-              label="Have Claude ask what's next"
+            <Popup
+              value={settings.askWhen}
+              options={
+                [
+                  ["decision", "Ask when it needs a decision"],
+                  ["always", "Always ask what's next"],
+                  ["never", "Don't ask"],
+                ] as const
+              }
+              onChange={(v) => set("askWhen", v)}
+              label="When Claude finishes a turn"
               disabled={off || !settings.approvals}
             />
           </Row>
@@ -160,11 +167,18 @@ export default function Hooks({ app, settings, set }: PaneProps) {
             detail="Each question comes with what Claude said that turn, and what's gone on lately. Click the menu bar icon to see every chat waiting on you or at work, reply to finished ones, and send a message to one mid-task. Right-click it for the menu."
             info="Headroom reads Claude's reply, and your recent messages and answers (the last few, shortened), from the session's transcript when the question comes in, and keeps them only until it's answered. Claude is asked to end with a short summary of what it did, which is the only extra it writes. So you can reply from the menu bar, a finished turn waits for a reply (up to the time above), and the chat looks like it's still working meanwhile. It lets go as soon as you open that chat yourself. A message you send a chat at work reaches it after its next step (or right away with Send Now, which stops the command it's running), since Claude Code waits for Headroom after each one (about 20 ms) while this is on."
           >
+            <Switch checked={settings.handsFree} onChange={(v) => set("handsFree", v)} label="Hands-free" disabled={off || !settings.approvals} />
+          </Row>
+          <Row
+            inset
+            title="Show replies right away"
+            detail="A finished turn's reply drops down from the menu bar, like a question, to read and answer. Off, it waits in the list."
+          >
             <Switch
-              checked={settings.handsFree}
-              onChange={(v) => set("handsFree", v)}
-              label="Hands-free"
-              disabled={off || !settings.approvals || !settings.askNext}
+              checked={settings.showReplies}
+              onChange={(v) => set("showReplies", v)}
+              label="Show replies right away"
+              disabled={off || !settings.approvals || !settings.handsFree}
             />
           </Row>
         </div>
