@@ -152,7 +152,7 @@ If the cards are more than you want on screen, turn on **Compact cards** (Settin
 
 ### Hands-free
 
-Turn on **Hands-free**, and you can keep your sessions going from the menu bar without opening a chat. A turn that ends with an answer rather than a question drops down too, with all of Claude's reply and a box to write back in, so you can keep going without a prompt (turn off **Show replies right away** to have it wait in the list). Each question comes with what Claude said that turn, scrolling if it's long. **Recent** shows what's gone on lately instead: your messages and answers, Claude's updates, and what it did in between ("Ran 3 commands, edited 2 files"), put together by Headroom from the session's transcript, so it costs no tokens. Claude is asked to end with a short summary of what it did, which is all it writes extra.
+Turn on **Hands-free**, and you can keep your sessions going from the menu bar without opening a chat. A turn that ends with an answer rather than a question drops down too, with all of Claude's reply and a box to write back in, so you can keep going without a prompt (turn off **Show replies right away** to have it wait in the list). Its clock puts it off for 5 minutes to an hour, and it comes back then. Each question comes with what Claude said that turn, scrolling if it's long. **Recent** shows what's gone on lately instead: your messages and answers, Claude's updates, and what it did in between ("Ran 3 commands, edited 2 files"), put together by Headroom from the session's transcript, so it costs no tokens. Claude is asked to end with a short summary of what it did, which is all it writes extra.
 
 <p align="center">
   <picture>
