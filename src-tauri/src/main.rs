@@ -914,6 +914,20 @@ enum OnClick {
     Pane(&'static str),
     /// A setting in Settings: its pane, and the row's title.
     Setting(&'static str, &'static str),
+    /// A limit's usage alert: Usage in Settings, or with one of its buttons, the alert moved to another level.
+    Alert(&'static str),
+}
+
+/// A usage alert's buttons, for each level it could offer first: that level and the next two, to hear about next.
+fn alert_kinds() -> Vec<(String, Vec<(String, String)>)> {
+    ALERT_LEVELS
+        .iter()
+        .enumerate()
+        .map(|(i, first)| {
+            let buttons = ALERT_LEVELS[i..].iter().take(3).map(|l| (format!("alert-at-{l}"), format!("Alert at {l}%")));
+            (format!("alert-from-{first}"), buttons.collect())
+        })
+        .collect()
 }
 
 /// Send a notification that `on_click` says what to open for, unless alerts are paused. Whether it stays on screen is
@@ -948,6 +962,18 @@ fn alert(state: &State, title: &str, body: &str, on_click: Option<OnClick>) {
 }
 
 fn alert_with(state: &State, title: &str, body: &str, on_click: Option<OnClick>, picture: Option<&Path>) {
+    alert_kind(state, title, body, on_click, picture, None);
+}
+
+/// A notification with a kind's buttons (see `alert_kinds`).
+fn alert_kind(
+    state: &State,
+    title: &str,
+    body: &str,
+    on_click: Option<OnClick>,
+    picture: Option<&Path>,
+    kind: Option<&str>,
+) {
     static SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = format!("headroom-{}-{}", std::process::id(), SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     if let Some(on_click) = on_click {
@@ -963,7 +989,7 @@ fn alert_with(state: &State, title: &str, body: &str, on_click: Option<OnClick>,
         // Running with `tauri dev`, or a copy built without a Developer ID
         let _ = state.app.notification().builder().title(title).body(body).show();
     } else {
-        notifications::send(&id, title, body, picture);
+        notifications::send(&id, title, body, picture, kind);
     }
     if *state.persistent_alerts.lock().unwrap() {
         return;
@@ -989,12 +1015,20 @@ fn notification_clicked(app: &AppHandle, clicked: notifications::Clicked) {
         .iter()
         .rev()
         .find(|(id, title, body, _)| match &clicked {
-            notifications::Clicked::Id(clicked) => id == clicked,
+            notifications::Clicked::Id(clicked, _) => id == clicked,
             notifications::Clicked::Text { title: t, body: b } => title == t && body == b,
         })
         .map(|(_, _, _, on_click)| on_click.clone());
     drop(clicks);
+    let button = match &clicked {
+        notifications::Clicked::Id(_, button) => button.clone(),
+        notifications::Clicked::Text { .. } => None,
+    };
     match on_click {
+        Some(OnClick::Alert(key)) => match button.and_then(|b| b.strip_prefix("alert-at-")?.parse().ok()) {
+            Some(level) if ALERT_LEVELS.contains(&level) => set_alert(&state, key, Some(level)),
+            _ => open_settings(app, "usage"),
+        },
         Some(OnClick::Pane(pane)) => open_settings(app, pane),
         Some(OnClick::Setting(pane, setting)) => open_settings_at(app, pane, Some(setting)),
         Some(OnClick::Session { id, app: host }) => {
@@ -1439,11 +1473,18 @@ fn check_alert(state: &State, limit: &Limit, w: &Window) {
         alert.fired = false;
     } else if !alert.fired {
         alert.fired = true;
-        notify_to(
+        if is_paused(state) {
+            return;
+        }
+        // Buttons to move the alert to a level still ahead, to hear about next
+        let next = ALERT_LEVELS.iter().find(|l| **l as f64 > w.pct).map(|l| format!("alert-from-{l}"));
+        alert_kind(
             state,
             &format!("Claude {} usage at {:.0}%", limit.info.label, w.pct),
             &format!("You've passed your {t}% alert{}.", fmt_reset(w.resets_at)),
-            Some(OnClick::Pane("usage")),
+            Some(OnClick::Alert(limit.info.key)),
+            None,
+            next.as_deref(),
         );
     }
 }
@@ -3732,6 +3773,7 @@ fn main() {
                 let app = handle.clone();
                 let _ = handle.run_on_main_thread(move || notification_clicked(&app, clicked));
             });
+            notifications::kinds(&alert_kinds());
             app.manage(state.clone());
             show_paused(&state);
             tauri::async_runtime::spawn(refresh_loop(state.clone()));
@@ -3840,6 +3882,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_usage_alert_offers_the_levels_still_ahead() {
+        let kinds = alert_kinds();
+        let buttons = |first: &str| {
+            let (_, buttons) = kinds.iter().find(|(name, _)| name == first).unwrap();
+            buttons.iter().map(|(_, words)| words.as_str()).collect::<Vec<_>>()
+        };
+        assert_eq!(buttons("alert-from-70"), ["Alert at 70%", "Alert at 80%", "Alert at 90%"]);
+        assert_eq!(buttons("alert-from-90"), ["Alert at 90%", "Alert at 95%"]);
+        assert_eq!(buttons("alert-from-95"), ["Alert at 95%"]);
+    }
 
     #[test]
     fn finds_only_the_commands_claude_is_running() {

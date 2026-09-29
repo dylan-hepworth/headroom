@@ -22,8 +22,8 @@ tauri-plugin-autostart = "2"
 objc2 = "0.6"
 plist = "1"
 base64 = "0.22"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSAttributedString", "NSDictionary", "NSValue", "NSURL", "NSGeometry", "NSArray", "NSError"] }
-objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationAttachment", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSSet", "NSString", "NSAttributedString", "NSDictionary", "NSValue", "NSURL", "NSGeometry", "NSArray", "NSError"] }
+objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNNotificationAttachment", "UNNotificationAction", "UNNotificationCategory", "block2"] }
 block2 = "0.6"
 objc2-speech = { version = "0.3", features = ["SFSpeechRecognizer", "SFSpeechRecognitionRequest", "SFSpeechRecognitionTask", "SFSpeechRecognitionResult", "SFTranscription", "block2"] }
 objc2-avf-audio = { version = "0.3", features = ["AVAudioEngine", "AVAudioNode", "AVAudioIONode", "AVAudioBuffer", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "block2"] }

@@ -18,18 +18,18 @@ use objc2::AllocAnyThread;
 use objc2::{
     define_class, msg_send, rc::Retained, runtime::NSObject, runtime::NSObjectProtocol, runtime::ProtocolObject,
 };
-use objc2_foundation::{NSArray, NSError, NSString};
+use objc2_foundation::{NSArray, NSError, NSSet, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationAttachment,
-    UNNotificationPresentationOptions,
-    UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
-    UNUserNotificationCenterDelegate,
+    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationAction,
+    UNNotificationActionOptions, UNNotificationAttachment, UNNotificationCategory, UNNotificationCategoryOptions,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse, UNNotificationSound,
+    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 
-/// A notification that was clicked.
+/// A notification that was clicked, or one of its buttons.
 pub enum Clicked {
-    /// One sent through UNUserNotificationCenter, by its ID.
-    Id(String),
+    /// One sent through UNUserNotificationCenter, by its ID, and the button's ID if it was one of its buttons.
+    Id(String, Option<String>),
     /// One sent through the plugin, which macOS only tells us the title and text of.
     Text { title: String, body: String },
 }
@@ -73,8 +73,11 @@ define_class!(
             handler: &DynBlock<dyn Fn()>,
         ) {
             let id = response.notification().request().identifier().to_string();
+            // A click on the notification itself comes as macOS's own "default" action, rather than one of ours
+            let action = response.actionIdentifier().to_string();
+            let button = (!action.starts_with("com.apple.")).then_some(action);
             if let Some(on_click) = ON_CLICK.get() {
-                on_click(Clicked::Id(id));
+                on_click(Clicked::Id(id, button));
             }
             handler.call(());
         }
@@ -122,12 +125,46 @@ pub fn ask() {
     );
 }
 
+/// The kinds of notification that have buttons: each kind's name, and its buttons' IDs and words. macOS keeps them
+/// by name, and a notification sent with one of the names (see `send`) gets its buttons.
+pub fn kinds(kinds: &[(String, Vec<(String, String)>)]) {
+    if !available() {
+        return;
+    }
+    let categories: Vec<Retained<UNNotificationCategory>> = kinds
+        .iter()
+        .map(|(name, buttons)| {
+            let actions: Vec<Retained<UNNotificationAction>> = buttons
+                .iter()
+                .map(|(id, words)| {
+                    UNNotificationAction::actionWithIdentifier_title_options(
+                        &NSString::from_str(id),
+                        &NSString::from_str(words),
+                        UNNotificationActionOptions::empty(),
+                    )
+                })
+                .collect();
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(name),
+                &NSArray::from_retained_slice(&actions),
+                &NSArray::new(),
+                UNNotificationCategoryOptions::empty(),
+            )
+        })
+        .collect();
+    UNUserNotificationCenter::currentNotificationCenter()
+        .setNotificationCategories(&NSSet::from_retained_slice(&categories));
+}
+
 /// Send a notification. `id` is how it's known later, to take it away or to handle a click on it. A `picture` shows
-/// beside the text; macOS takes the file into its own store.
-pub fn send(id: &str, title: &str, body: &str, picture: Option<&std::path::Path>) {
+/// beside the text; macOS takes the file into its own store. With a `kind` (see `kinds`), it gets that kind's buttons.
+pub fn send(id: &str, title: &str, body: &str, picture: Option<&std::path::Path>, kind: Option<&str>) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
+    if let Some(kind) = kind {
+        content.setCategoryIdentifier(&NSString::from_str(kind));
+    }
     if let Some(path) = picture {
         let url = objc2_foundation::NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         // SAFETY: a file URL to a picture Headroom just wrote, and no options
