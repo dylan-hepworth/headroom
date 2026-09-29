@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -26,6 +26,7 @@ mod context;
 mod desktop;
 mod hooks;
 mod icons;
+mod made;
 mod notifications;
 mod plans;
 mod sessions;
@@ -1735,6 +1736,93 @@ fn open_planner(app: &AppHandle, follow: Option<&str>) {
     };
     in_dock_while_open(app, &w);
     let _ = w.set_focus();
+}
+
+/// Something Claude made, if the panel was shown it: only those can be opened, previewed, or read from there.
+fn made_ok(state: &State, item: &str) -> Result<(), String> {
+    match state.sessions.lock().unwrap().made_has(item) {
+        true => Ok(()),
+        false => Err("Headroom can't show that any more".into()),
+    }
+}
+
+/// The Quick Look the panel opened, while it's open: the list stays down for it, though it's another app in front.
+static LOOKING: Mutex<Option<std::process::Child>> = Mutex::new(None);
+
+/// Look at something Claude made: a web address in the browser, and a file in Quick Look, over whatever the user's
+/// doing.
+#[tauri::command]
+fn look_at(item: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    made_ok(&state, &item)?;
+    if made::kind(&item) == made::Kind::Link {
+        Command::new("open").arg(&item).spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let mut looking = LOOKING.lock().unwrap();
+    // One at a time, as Quick Look is
+    if let Some(mut before) = looking.take() {
+        let _ = before.kill();
+        let _ = before.wait();
+    }
+    let child = Command::new("qlmanage").args(["-p", &item]).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    *looking = Some(child.map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+/// Whether the Quick Look the panel opened is still open.
+#[tauri::command]
+fn looking() -> bool {
+    let mut looking = LOOKING.lock().unwrap();
+    let open = looking.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+    if !open {
+        *looking = None;
+    }
+    open
+}
+
+#[tauri::command]
+fn show_made(item: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
+    made_ok(&state, &item)?;
+    Command::new("open").args(["-R", &item]).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// A picture Claude made, made small for its thumbnail, as a data address the panel can show.
+#[tauri::command]
+fn made_picture(item: String, state: tauri::State<Arc<State>>) -> Result<String, String> {
+    use base64::Engine;
+    made_ok(&state, &item)?;
+    if made::kind(&item) != made::Kind::Image || item.to_lowercase().ends_with(".svg") {
+        return Err("That isn't a picture Headroom can show".into());
+    }
+    let small = std::env::temp_dir().join(format!("headroom-thumb-{}.png", std::process::id()));
+    let made = Command::new("sips")
+        .args(["-s", "format", "png", "-Z", "360", &item, "--out"])
+        .arg(&small)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    let bytes = if made.success() { std::fs::read(&small).map_err(|e| e.to_string())? } else { vec![] };
+    let _ = std::fs::remove_file(&small);
+    if bytes.is_empty() {
+        return Err("That picture couldn't be read".into());
+    }
+    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+/// A document Claude made, to read in the panel: Markdown or plain text, and not a huge one.
+#[tauri::command]
+fn read_made(item: String, state: tauri::State<Arc<State>>) -> Result<String, String> {
+    made_ok(&state, &item)?;
+    if !made::readable(&item) {
+        return Err("Headroom only reads Markdown and text itself".into());
+    }
+    let size = std::fs::metadata(&item).map_err(|e| e.to_string())?.len();
+    if size > made::MOST_READ {
+        return Err("It's too long to read here. Quick Look can show it.".into());
+    }
+    std::fs::read_to_string(&item).map_err(|e| e.to_string())
 }
 
 /// Save a team from the planner to a file the user picks, for another Mac or another person to import. Returns
@@ -3712,6 +3800,11 @@ fn main() {
             message_manager,
             clear_team,
             export_plan,
+            look_at,
+            looking,
+            show_made,
+            made_picture,
+            read_made,
             headroom_in_front,
             last_chat,
             emoji_names,

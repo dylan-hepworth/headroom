@@ -71,6 +71,9 @@ export type Session = {
 };
 
 /** A team from the planner, started on a chat (see team.rs): its managers, each a session of its own. */
+/** Something Claude made in a turn, to look at from the panel (see made.rs): where it is, what it is, and its name. */
+export type Made = { path: string; kind: "doc" | "image" | "link" | "file"; name: string };
+
 /** How one of a manager's workers is getting on, from the hooks: by its name as a subagent. */
 export type WorkerLive = { working: boolean; activity: string | null; steps: string[]; finished: number; said: string | null };
 
@@ -210,6 +213,11 @@ export const bridge = inApp
       savePlan: (plan: Plan) => invoke("save_plan", { plan }),
       deletePlan: (id: string) => invoke("delete_plan", { id }),
       /** Open the planner, following the team at work on `plan` if there's one. */
+      lookAt: (path: string) => invoke("look_at", { item: path }),
+      looking: () => invoke<boolean>("looking"),
+      showMade: (path: string) => invoke("show_made", { item: path }),
+      madePicture: (path: string) => invoke<string>("made_picture", { item: path }),
+      readMade: (path: string) => invoke<string>("read_made", { item: path }),
       /** Save a team to a file the user picks; false if they cancel. */
       exportPlan: (name: string, text: string) => invoke<boolean>("export_plan", { name, text }),
       openPlanner: (plan?: string) => invoke("open_planner_now", { plan: plan ?? null }),
@@ -389,6 +397,15 @@ function mockBridge() {
     plans: async (): Promise<Plan[]> => [myCompany as Plan],
     savePlan: async (_plan: Plan) => {},
     deletePlan: async (_id: string) => {},
+    lookAt: async (path: string) => void (path.startsWith("http") && window.open(path)),
+    looking: async () => false,
+    showMade: async (_path: string) => {},
+    madePicture: async (_path: string) => {
+      const picture = (await import("./Popover")).PREVIEW_PICTURE;
+      return "image" in picture ? picture.image : "";
+    },
+    readMade: async (_path: string) =>
+      "# Duplicates\n\n214 pairs that look like the same photo, grouped by how they differ:\n\n| Kind | Pairs | Keep |\n| --- | ---: | --- |\n| Only the size | 180 | The larger file |\n| Seconds apart | 29 | Ask each time |\n| Different edits | 5 | Both |\n\n## Next\n\n- Nothing's deleted until you say\n- The groups are in `duplicates.json`",
     // In a browser, it downloads
     exportPlan: async (name: string, text: string) => {
       const link = document.createElement("a");

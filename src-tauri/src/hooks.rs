@@ -365,10 +365,12 @@ fn save_context(id: &str, event: &Value) -> Option<()> {
     let said = event["last_assistant_message"].as_str().filter(|s| !s.trim().is_empty()).map_or(said, String::from);
     let path = context_path(id)?;
     fs::create_dir_all(path.parent()?).ok()?;
+    let cwd = Path::new(event["cwd"].as_str().unwrap_or_default());
     let text = json!({
         "prompt": prompt.map(|p| clip_to(&p, 8_000, false)),
         "said": clip_to(&said, 40_000, true),
         "recent": recent(&lines, 10),
+        "named": crate::made::named(&said, cwd),
     });
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(path).ok()?;
     file.write_all(text.to_string().as_bytes()).ok()
@@ -1313,6 +1315,19 @@ fn keep(event: &Value) -> Value {
     }
     if let Some(text) = event["last_assistant_message"].as_str() {
         out.insert("last_assistant_message".into(), clip(text).into());
+        // The documents, pictures, and links it names, to look at from the panel (see made.rs). Only here is the
+        // whole reply to hand, and the session's folder to find them in.
+        let cwd = Path::new(event["cwd"].as_str().unwrap_or_default());
+        let named = crate::made::named(text, cwd);
+        if !named.is_empty() {
+            out.insert("named".into(), named.into());
+        }
+    }
+    // Files Claude sent the user, as the Claude app shows them
+    if event["tool_name"] == "SendUserFile" {
+        if let Some(files) = event["tool_input"]["files"].as_array() {
+            out.insert("files".into(), files.iter().filter(|f| f.is_string()).cloned().collect::<Vec<_>>().into());
+        }
     }
     if let Some(detail) = tool_detail(&event["tool_input"]) {
         out.insert("detail".into(), detail.into());

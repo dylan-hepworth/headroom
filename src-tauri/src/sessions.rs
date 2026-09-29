@@ -77,6 +77,8 @@ pub struct Session {
     chat: Option<crate::desktop::Chat>,
     /// Its finished turn has been seen: the chat was open in the Claude app when it ended, or has been opened since.
     seen: bool,
+    /// What it's made since the user last had their say, to look at from the panel (see made.rs)
+    made: crate::made::Made,
     /// Run by a script or an app built on the Agent SDK, with nobody there to answer it.
     unattended: bool,
     /// The process that last ran one of its hooks: its Claude Code, or a shell in between.
@@ -318,6 +320,9 @@ impl Sessions {
             return None;
         }
 
+        // The user answered its question, or replied to its finished turn, from the panel: what it makes now is new
+        let answered = name == "HeadroomAnswered"
+            && request.and_then(|r| self.held.get(r)).is_some_and(|h| h.questions.is_some() || h.reply);
         let session = self.sessions.entry(id.to_string()).or_insert_with(|| Session {
             cwd: String::new(),
             title: None,
@@ -335,6 +340,7 @@ impl Sessions {
             unattended: false,
             hook_parent: None,
             transcript: None,
+            made: Default::default(),
         });
         if let Some(cwd) = event["cwd"].as_str() {
             session.cwd = cwd.to_string();
@@ -361,6 +367,24 @@ impl Sessions {
         }
         if let Some(pid) = event["ppid"].as_i64().and_then(|p| i32::try_from(p).ok()) {
             session.hook_parent = Some(pid);
+        }
+        // What it's made goes back to nothing each time the user has their say: a message, an answer, or a reply,
+        // however it went in (in hands-free, that's rarely a message of its own)
+        let answered_here = name == "PostToolUse" && tool == "AskUserQuestion";
+        if name == "UserPromptSubmit" || interjected || name == "HeadroomInterjected" || answered || answered_here {
+            session.made.clear();
+        }
+        if matches!(name, "PostToolUse") && matches!(tool, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+            session.made.wrote(detail);
+        }
+        let cwd = Path::new(&session.cwd);
+        for file in event["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str()) {
+            if let Some(file) = crate::made::place(file, cwd) {
+                session.made.add(&file);
+            }
+        }
+        for named in event["named"].as_array().into_iter().flatten().filter_map(|n| n.as_str()) {
+            session.made.add(named);
         }
 
         let status = match name {
@@ -612,6 +636,11 @@ impl Sessions {
                             .map(|q| json!({ "question": q["text"], "options": q["options"], "multiple": q["multiple"] }))
                             .collect();
                         ask["questions"] = shown.into();
+                        let named: Vec<String> = held.context.as_ref().map_or(vec![], |c| {
+                            let named = c["named"].as_array().into_iter().flatten();
+                            named.filter_map(|n| n.as_str().map(String::from)).collect()
+                        });
+                        ask["made"] = session.made.to_json(&named);
                         if let Some(context) = &held.context {
                             ask["said"] = context["said"].clone();
                             ask["prompt"] = context["prompt"].clone();
@@ -660,7 +689,16 @@ impl Sessions {
         self.sessions.keys().filter_map(|id| self.icon_key(id).filter(|(_, c)| c == cwd).map(|(key, _)| key)).collect()
     }
 
-    /// The process that last ran one of a session's hooks (see hooks.rs `keep`).
+    /// Whether Claude made this, as far as the panel's been shown: only those can be opened, previewed, or read from
+    /// it.
+    pub fn made_has(&self, item: &str) -> bool {
+        let named = |h: &Held| {
+            let context = h.context.as_ref();
+            context.is_some_and(|c| c["named"].as_array().into_iter().flatten().any(|n| n == item))
+        };
+        self.sessions.values().any(|s| s.made.has(item)) || self.held.values().any(named)
+    }
+
     /// A team's manager, as far as its hooks have told us.
     pub fn manager(&self, id: &str) -> Option<&Manager> {
         self.managers.get(id)
@@ -671,6 +709,7 @@ impl Sessions {
         self.managers.remove(id);
     }
 
+    /// The process that last ran one of a session's hooks, or a team manager's (see hooks.rs `keep`).
     pub fn hook_parent(&self, id: &str) -> Option<i32> {
         match self.sessions.get(id) {
             Some(s) => s.hook_parent,
@@ -795,6 +834,7 @@ impl Sessions {
                     "state": state,
                     "since": since.timestamp_millis(),
                     "what": what.unwrap_or_default(),
+                    "made": s.made.to_json(&[]),
                     "heldId": held_by(id, false),
                     "replyId": held_by(id, true),
                     "inChat": s.host_chat.is_some(),
@@ -1013,6 +1053,34 @@ mod tests {
 
     fn status(sessions: &Sessions) -> Status {
         sessions.sessions["s1"].status
+    }
+
+    #[test]
+    fn what_it_made_goes_back_to_nothing_when_the_user_has_their_say() {
+        let dir = std::env::temp_dir().join(format!("headroom-turn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plan = dir.join("plan.md");
+        std::fs::write(&plan, "x").unwrap();
+        let plan = std::fs::canonicalize(plan).unwrap().to_string_lossy().into_owned();
+        let mut sessions = Sessions::default();
+        let made = |sessions: &Sessions| sessions.sessions["s1"].made.to_json(&[]).as_array().unwrap().len();
+        sessions.apply(&event("UserPromptSubmit", json!({})));
+        sessions.apply(&event("PostToolUse", json!({ "tool_name": "Write", "detail": plan })));
+        sessions.apply(&event("PostToolUse", json!({ "tool_name": "Edit", "detail": "/nowhere/app.ts" })));
+        assert_eq!(made(&sessions), 1);
+        assert!(sessions.made_has(&plan));
+        // Its question answered from the panel, or in the chat
+        sessions.apply(&event("PostToolUse", json!({ "tool_name": "AskUserQuestion" })));
+        assert_eq!(made(&sessions), 0);
+        assert!(!sessions.made_has(&plan));
+        // Sent to the user, or named in its reply
+        sessions.apply(&event("PostToolUse", json!({ "tool_name": "SendUserFile", "files": [plan.clone()] })));
+        sessions.apply(&event("Stop", json!({ "named": ["https://example.com/a"] })));
+        assert_eq!(made(&sessions), 2);
+        // A message from the list
+        sessions.apply(&event("HeadroomInterjected", json!({})));
+        assert_eq!(made(&sessions), 0);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

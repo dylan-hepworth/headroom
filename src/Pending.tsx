@@ -6,7 +6,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar, previewIcon, IconPicker, type ChatIcon } from "./Avatar";
-import { bridge, type TeamRun } from "./bridge";
+import { bridge, type Made, type TeamRun } from "./bridge";
+import { MadeStrip } from "./Made";
 import { MarkdownSnippet } from "./markdown";
 import { OtherAnswer, outline, PREVIEW_PICTURE, useSize } from "./Popover";
 import { TeamBar } from "./Running";
@@ -35,6 +36,8 @@ export type Pending = {
   canStop?: boolean;
   /** The chat's icon, to tell it apart at a glance. */
   icon?: ChatIcon;
+  /** What Claude's made this turn, to look at without opening the chat */
+  made?: Made[];
 };
 
 const STATE: Record<Pending["state"], string> = {
@@ -147,6 +150,7 @@ function Row({
           </div>
           {/* Claude's words, in Markdown, but not a command or what it's doing */}
           <div className="pending-what">{item.state === "done" || item.state === "question" ? <MarkdownSnippet text={item.what} /> : item.what}</div>
+          <MadeStrip made={item.made} />
           {team && <TeamBar run={team} onOpen={() => bridge.openPlanner(team.plan.id)} />}
           {item.queued && (
             <div className="pending-sent">
@@ -391,6 +395,10 @@ export function PendingPreview() {
           state: "done",
           since: now - 8 * 60_000,
           what: "Moved the home page and every post to the new layout. The archive still uses the old one, since its year headings need their own design.",
+          made: [
+            { path: "/Users/me/Code/blog/notes/layout.md", kind: "doc", name: "layout.md" },
+            { path: "/Users/me/Code/blog/shots/home-dark.png", kind: "image", name: "home-dark.png" },
+          ],
           replyId: "r-c",
           inChat: true,
         },

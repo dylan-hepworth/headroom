@@ -17,7 +17,8 @@ import React, {
 } from "react";
 import { Avatar, choosePicture, previewIcon, type ChatIcon } from "./Avatar";
 import { MicButton, useVoice, Waveform, type Listening } from "./Voice";
-import { bridge } from "./bridge";
+import { bridge, type Made } from "./bridge";
+import { MadeStrip } from "./Made";
 import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
 import { TalkPanel } from "./Talk";
@@ -57,6 +58,8 @@ export type Ask =
       said?: string;
       prompt?: string;
       recent?: Recent[];
+      /** What Claude's made this turn, to look at before answering */
+      made?: Made[];
     };
 
 /** A card that's been answered, as it was, so it can show its receipt (or dissolve) even after the request is gone
@@ -394,7 +397,9 @@ function QuestionCard({
   return (
     <>
       <Header ask={ask} glyph={QUESTION_GLYPH} />
-      {(!!ask.said || !!ask.prompt || (ask.recent?.length ?? 0) > 0) && <Conversation said={ask.said} prompt={ask.prompt} recent={ask.recent} />}
+      {(!!ask.said || !!ask.prompt || (ask.recent?.length ?? 0) > 0 || (ask.made?.length ?? 0) > 0) && (
+        <Conversation said={ask.said} prompt={ask.prompt} recent={ask.recent} made={ask.made} />
+      )}
       {ask.questions.length > 1 && (
         <div className="ask-step">
           Question {step + 1} of {ask.questions.length}
@@ -454,7 +459,7 @@ function QuestionCard({
 
 /** Hands-free: what Claude said this turn, to read before answering, and a button to see what's gone on lately
  *  instead, with what the user last said. Long ones scroll. */
-function Conversation({ said, prompt, recent = [] }: { said?: string; prompt?: string; recent?: Recent[] }) {
+function Conversation({ said, prompt, recent = [], made }: { said?: string; prompt?: string; recent?: Recent[]; made?: Made[] }) {
   // The user's last message goes first when it's from before what's listed
   const lately: Recent[] = recent.some((r) => r.kind === "said") || !prompt ? recent : [{ kind: "said", text: prompt }, ...recent];
   const [showRecent, setShowRecent] = useState(!said);
@@ -490,6 +495,7 @@ function Conversation({ said, prompt, recent = [] }: { said?: string; prompt?: s
           <Markdown text={said ?? ""} />
         )}
       </div>
+      <MadeStrip made={made} thumb />
     </div>
   );
 }
@@ -1559,7 +1565,8 @@ export function PopoverWindow() {
     const check = () =>
       bridge.headroomInFront().then((ours) => {
         if (writing.current || document.hasFocus()) return;
-        if (!ours) bridge.closePopover();
+        // Quick Look, opened from the list, has the front, and the list stays down for it until it's put away
+        if (!ours) bridge.looking().then((looking) => (looking ? (watch ??= window.setInterval(check, 500)) : bridge.closePopover()));
         else if (watch === undefined) watch = window.setInterval(check, 500);
       });
     // The app only knows which one's in front a moment after the focus moves
@@ -1708,6 +1715,11 @@ export function PopoverPreview() {
         { kind: "wrote", text: "The library has 12,408 photos. Some exports have the same capture time as their originals." },
         { kind: "answered", about: "Should edited copies count as duplicates?", text: "Only if the edit is just a crop" },
         { kind: "did", text: "Ran 2 commands, edited a file" },
+      ],
+      made: [
+        { path: "/Users/me/Code/photo-sorter/pairs/IMG_2041.png", kind: "image", name: "IMG_2041.png" },
+        { path: "/Users/me/Code/photo-sorter/duplicates-report.md", kind: "doc", name: "duplicates-report.md" },
+        { path: "https://support.apple.com/guide/photos/pht6d60d10f/mac", kind: "link", name: "support.apple.com/…/mac" },
       ],
       questions: [
         {

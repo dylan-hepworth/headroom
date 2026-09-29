@@ -1,6 +1,6 @@
-// Just enough Markdown for Claude's replies in the popover: paragraphs, headings, lists, quotes, code, and the usual
-// inline marks. It's turned into elements, never HTML, so nothing in a reply can run in the page. Tables and anything
-// else it doesn't know are shown as they were written.
+// Just enough Markdown for Claude's replies in the popover, and the documents it writes: paragraphs, headings, lists,
+// quotes, code, tables, and the usual inline marks. It's turned into elements, never HTML, so nothing in a reply can
+// run in the page. Anything else it doesn't know is shown as it was written.
 
 import type { ReactNode } from "react";
 
@@ -8,7 +8,18 @@ type Block =
   | { kind: "p" | "h" | "quote"; text: string }
   | { kind: "code"; text: string }
   | { kind: "list"; ordered: boolean; start: number; items: Block[][] }
+  | { kind: "table"; head: string[]; align: ("left" | "center" | "right")[]; rows: string[][] }
   | { kind: "rule" };
+
+/** A table row's cells, without the pipes at either end. */
+const cells = (row: string) =>
+  row
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const indent = (line: string) => line.length - line.trimStart().length;
@@ -38,10 +49,15 @@ function blocks(text: string): Block[] {
       while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
       out.push({ kind: "quote", text: quote.join(" ") });
     } else if (/^\s*\|/.test(line)) {
-      // A table, as written: it lines up in a fixed-width font
       const rows: string[] = [];
       while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++].trim());
-      out.push({ kind: "code", text: rows.join("\n") });
+      if (rows.length > 1 && TABLE_RULE.test(rows[1])) {
+        const align = cells(rows[1]).map((c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "left"));
+        out.push({ kind: "table", head: cells(rows[0]), align, rows: rows.slice(2).map(cells) });
+      } else {
+        // Not a table after all: as written, lined up in a fixed-width font
+        out.push({ kind: "code", text: rows.join("\n") });
+      }
     } else if (LIST_ITEM.test(line)) {
       // Each item is its first line, plus whatever's indented under it (more lines, a list inside it, a code block),
       // which is read as Markdown of its own. A blank line doesn't end the list if more of it follows.
@@ -147,6 +163,33 @@ function render(list: Block[]): ReactNode[] {
         );
       case "rule":
         return <hr key={i} />;
+      case "table":
+        return (
+          <div key={i} className="md-table">
+            <table>
+              <thead>
+                <tr>
+                  {block.head.map((cell, j) => (
+                    <th key={j} style={{ textAlign: block.align[j] }}>
+                      {inline(cell)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, r) => (
+                  <tr key={r}>
+                    {block.head.map((_, j) => (
+                      <td key={j} style={{ textAlign: block.align[j] }}>
+                        {inline(row[j] ?? "")}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
       case "list": {
         const List = block.ordered ? "ol" : "ul";
         return (

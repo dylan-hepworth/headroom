@@ -163,6 +163,8 @@ Add **Hands-free** to asking what's next, and you can keep your sessions going f
 
 Click the menu bar icon and every chat waiting on you or at work drops down in a list, like the one at the top (right-click the icon for the menu). Requests come first, then chats at work with what they're doing, then finished chats with the start of Claude's last reply. Click one with a request to bring up its card, or any other to open it where it runs. **Reply** answers a finished chat right there, images and all, and **Mark as Seen** takes one off the list (and its dot off the menu bar) without opening it.
 
+What Claude made that turn comes along too, on its card and its row: the documents and pictures it wrote, the files it sent you, and the documents and links its reply names. A picture shows as a thumbnail. Click a file to see it in Quick Look, over whatever you're doing, or a Markdown file to read it right in the panel, tables and all.
+
 **Message** tells a chat at work something. Claude sees it after the command or edit it's running, or when it finishes, if that comes first. If it's partway through a long command, **Send Now** stops that command, the way Esc does in Claude Code, and Claude reads your message right away.
 
 <p align="center">
