@@ -218,6 +218,8 @@ export const bridge = inApp
       showMade: (path: string) => invoke("show_made", { item: path }),
       madePicture: (path: string) => invoke<string>("made_picture", { item: path }),
       readMade: (path: string) => invoke<string>("read_made", { item: path }),
+      planFile: (id: string) => invoke<string | null>("plan_file", { id }),
+      planPath: (id: string) => invoke<string | null>("plan_path", { id }),
       /** Save a team to a file the user picks; false if they cancel. */
       exportPlan: (name: string, text: string) => invoke<boolean>("export_plan", { name, text }),
       openPlanner: (plan?: string) => invoke("open_planner_now", { plan: plan ?? null }),
@@ -347,8 +349,12 @@ function mockVoice() {
   };
 }
 
+/** Plans' files, as the preview keeps them. `headroomPlanFile` stands in for Claude changing one. */
+const mockPlanFiles: Record<string, string> = { "my-company": JSON.stringify(myCompany, null, 2) };
+
 /** The same calls as the app, on made-up data kept in memory. */
 function mockBridge() {
+  (window as unknown as { headroomPlanFile: (id: string, text: string) => void }).headroomPlanFile = (id, text) => (mockPlanFiles[id] = text);
   const listeners = new Set<() => void>();
   const changed = () => listeners.forEach((f) => f());
   return {
@@ -395,7 +401,9 @@ function mockBridge() {
     markSeen: async (_sessions: string[]) => {},
     setIcon: async (_session: string, _icon: ChatIcon | null, _wholeProject: boolean) => {},
     plans: async (): Promise<Plan[]> => [myCompany as Plan],
-    savePlan: async (_plan: Plan) => {},
+    savePlan: async (plan: Plan) => void (mockPlanFiles[plan.id] = JSON.stringify(plan, null, 2)),
+    planFile: async (id: string) => mockPlanFiles[id] ?? null,
+    planPath: async (id: string) => `~/Library/Application Support/io.github.dylan-hepworth.headroom/plans/${id}.json`,
     deletePlan: async (_id: string) => {},
     lookAt: async (path: string) => void (path.startsWith("http") && window.open(path)),
     looking: async () => false,

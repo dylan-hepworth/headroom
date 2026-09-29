@@ -2110,6 +2110,17 @@ fn delete_plan(id: String, state: tauri::State<Arc<State>>) -> Result<(), String
     plans::delete(&state.config_dir, &id)
 }
 
+/// A plan's file, as it is now: for the planner to see a chat's changes to it while they plan together.
+#[tauri::command]
+fn plan_file(id: String, state: tauri::State<Arc<State>>) -> Option<String> {
+    plans::read(&state.config_dir, &id)
+}
+
+#[tauri::command]
+fn plan_path(id: String, state: tauri::State<Arc<State>>) -> Option<String> {
+    plans::path(&state.config_dir, &id).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// The popover's panel width, and the room around it for its shadow, in points. The window is the panel plus that room
 /// on each side; the page draws the panel inside it (see Popover.tsx).
 const POPOVER_WIDTH: f64 = 404.0;
@@ -3842,6 +3853,8 @@ fn main() {
             message_manager,
             clear_team,
             export_plan,
+            plan_file,
+            plan_path,
             look_at,
             looking,
             show_made,

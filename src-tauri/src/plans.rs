@@ -66,6 +66,16 @@ pub fn save(config: &Path, plan: &Value) -> Result<(), String> {
     fs::rename(&temp, dir.join(format!("{id}.json"))).map_err(|e| e.to_string())
 }
 
+/// Where a plan's file is, for a chat to change it while planning with the user (see Together.tsx).
+pub fn path(config: &Path, id: &str) -> Option<PathBuf> {
+    Some(dir(config).join(format!("{}.json", safe(id)?)))
+}
+
+/// A plan's file as it is now, whoever last wrote it.
+pub fn read(config: &Path, id: &str) -> Option<String> {
+    fs::read_to_string(path(config, id)?).ok()
+}
+
 pub fn delete(config: &Path, id: &str) -> Result<(), String> {
     let id = safe(id).ok_or("That plan's ID won't do as a file name")?;
     fs::remove_file(dir(config).join(format!("{id}.json"))).map_err(|e| e.to_string())

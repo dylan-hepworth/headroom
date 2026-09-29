@@ -13,7 +13,9 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
 import { bridge, type TeamRun } from "./bridge";
 import { SpokenField } from "./Voice";
+import { changes, checkTeam, type Change } from "./planChanges";
 import { LivePanel, liveOf, RunBar } from "./Running";
+import { keepShare, savedShare, ShareSheet, TogetherPanel, type Said, type Share } from "./Together";
 import "./plan.css";
 import "./popover.css";
 
@@ -43,7 +45,7 @@ const GRID = 20;
 export const W = 160;
 export const H = 64;
 export const MODELS: Model[] = ["Opus", "Sonnet", "Haiku"];
-const TOOLS = ["Read files", "Edit files", "Run commands", "Browse the web"];
+export const TOOLS = ["Read files", "Edit files", "Run commands", "Browse the web"];
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 export const edgeId = (e: Edge) => `${e.from}>${e.to}`;
 
@@ -809,7 +811,37 @@ function Inspector({
 
 /** A chat the plan can go to, and how it gets there: after the step it's on, as the reply to its finished turn, or
  *  copied, to paste in there. */
-type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes: "working" | "reply" | null };
+export type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes: "working" | "reply" | null };
+
+/** Every chat Headroom knows about, the ones that can take a message now first. */
+export function useChats(): Chat[] {
+  const [chats, setChats] = useState<Chat[]>([]);
+  useEffect(() => {
+    Promise.all([bridge.pendingSessions(), bridge.load()]).then(([pending, app]) => {
+      const now: Chat[] = pending
+        .filter((p) => p.state === "working" || p.replyId)
+        .map((p) => ({ id: p.id, title: p.title, project: p.project, icon: p.icon, takes: p.state === "working" ? "working" : "reply" }));
+      const rest: Chat[] = app.sessions
+        .filter((s) => !now.some((c) => c.id === s.id))
+        .map((s) => ({ id: s.id, title: s.title ?? s.project, project: s.project, icon: s.icon, takes: null }));
+      setChats([...now, ...rest]);
+    });
+  }, []);
+  return chats;
+}
+
+/** Give a chat some words: straight in, if it's at work or its finished turn is held for a reply, or copied, with the
+ *  chat opened to paste them into. Says which. */
+export async function deliver(chat: string, text: string): Promise<"sent" | "copied"> {
+  const now = (await bridge.pendingSessions()).find((p) => p.id === chat);
+  if (now && (now.state === "working" || now.replyId)) {
+    await bridge.sendToSession(chat, text);
+    return "sent";
+  }
+  await navigator.clipboard.writeText(text);
+  await bridge.openPending(chat);
+  return "copied";
+}
 
 /** Where the plan goes: a chat that can take it now (at work, or finished with its turn held open for a reply), after
  *  a look at exactly what it'll be told. Any other chat gets it copied, to paste in there. */
@@ -928,6 +960,12 @@ const exportText = (plan: Plan) =>
 
 /** A team from a file exported from Headroom, checked over and made one of this Mac's own, with a name none of
  *  `taken` has. Or, if it can't be read, why. Only what the planner knows goes in, so a file can't sneak in tools. */
+/** Whether two versions of a plan are the same team: its name, its agents, and its arrows, as read from a file. */
+function sameTeam(a: Plan, b: Plan) {
+  const read = (p: Plan) => JSON.stringify(checkTeam({ name: p.name, agents: p.agents, edges: p.edges }));
+  return read(a) === read(b);
+}
+
 export function readPlan(text: string, taken: string[]): Plan | string {
   const unreadable = "That file isn't a team exported from Headroom.";
   let data: unknown;
@@ -936,54 +974,14 @@ export function readPlan(text: string, taken: string[]): Plan | string {
   } catch {
     return unreadable;
   }
-  const file = data as { kind?: unknown; plan?: { name?: unknown; agents?: unknown; edges?: unknown } };
-  const p = file?.kind === "headroom-team" ? file.plan : undefined;
-  if (!p || !Array.isArray(p.agents) || !Array.isArray(p.edges) || !p.agents.length) return unreadable;
-  const words = (v: unknown, max = 4000) => (typeof v === "string" ? v.slice(0, max) : "");
-  const number = (v: unknown) => (typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(20000, Math.round(v))) : 0);
-  const icon = (v: unknown): ChatIcon => {
-    const i = v as { emoji?: unknown; image?: unknown };
-    if (typeof i?.emoji === "string" && i.emoji.length <= 16) return { emoji: i.emoji };
-    if (typeof i?.image === "string" && i.image.startsWith("data:image/") && i.image.length < 300_000) return { image: i.image };
-    return { emoji: "🐝" };
-  };
-  const agents: Agent[] = [];
-  for (const raw of p.agents as Record<string, unknown>[]) {
-    const role = raw?.role as Role;
-    const model = raw?.model as Model;
-    if (typeof raw?.id !== "string" || !(["Lead", "Manager", "Worker"] as Role[]).includes(role) || !MODELS.includes(model)) {
-      return "One of the team's agents isn't set up in a way Headroom can read.";
-    }
-    if (agents.some((a) => a.id === raw.id)) return "Two of the team's agents are the same one.";
-    agents.push({
-      id: raw.id,
-      name: words(raw.name, 80) || "Agent",
-      icon: icon(raw.icon),
-      model,
-      role,
-      x: number(raw.x),
-      y: number(raw.y),
-      brief: words(raw.brief),
-      commands: Array.isArray(raw.commands) ? raw.commands.filter((c): c is string => typeof c === "string").map((c) => c.slice(0, 80)) : [],
-      tools: Array.isArray(raw.tools) ? TOOLS.filter((t) => (raw.tools as unknown[]).includes(t)) : [],
-      ...(typeof raw.until === "string" ? { until: words(raw.until, 200) } : {}),
-    });
-  }
-  const known = (id: unknown) => agents.some((a) => a.id === id);
-  const edges: Edge[] = [];
-  for (const raw of p.edges as Record<string, unknown>[]) {
-    if (!known(raw?.from) || !known(raw?.to) || raw.from === raw.to) continue;
-    const loop = raw.loop as { until?: unknown; rounds?: unknown } | undefined;
-    const rounds = typeof loop?.rounds === "number" ? Math.max(1, Math.min(10, Math.round(loop.rounds))) : 0;
-    edges.push({
-      from: raw.from as string,
-      to: raw.to as string,
-      ...(rounds ? { loop: { until: words(loop!.until, 200) || "approved", rounds } } : {}),
-    });
-  }
-  let name = words(p.name, 80).trim() || "Imported team";
-  for (let n = 2; taken.includes(name); n++) name = `${words(p.name, 80).trim() || "Imported team"} ${n}`;
-  return { id: newId(), name, agents, edges };
+  const file = data as { kind?: unknown; plan?: unknown };
+  if (file?.kind !== "headroom-team") return unreadable;
+  const team = checkTeam(file.plan);
+  if (typeof team === "string") return team;
+  const base = team.name || "Imported team";
+  let name = base;
+  for (let n = 2; taken.includes(name); n++) name = `${base} ${n}`;
+  return { id: newId(), ...team, name };
 }
 
 /** A file the user picks, as text, or null if they don't pick one. */
@@ -1104,6 +1102,94 @@ export function PlannerWindow() {
   };
   // Why an import or export didn't work, until the next one
   const [problem, setProblem] = useState("");
+
+  // Planning with Claude (see Together.tsx): the plan shared with a chat, what each side's changed, and, for this
+  // window, the version last written or taken from the file, the file as last read, and what Undo goes back to
+  const [share, setShareNow] = useState<Share | null>(savedShare);
+  const setShare = (next: Share | null) => {
+    keepShare(next);
+    setShareNow(next);
+  };
+  const [sharing, setSharing] = useState(false);
+  const [said, setSaid] = useState<Said[]>([]);
+  const [shareProblem, setShareProblem] = useState("");
+  const shared = !!share && !!plan && share.plan === plan.id;
+  const together = useRef<{ saved: Plan | null; file: string; history: Plan[]; undoing: boolean }>({
+    saved: null,
+    file: "",
+    history: [],
+    undoing: false,
+  });
+  const current = useRef(plan);
+  current.current = plan;
+  const tell = (who: Said["who"], list: Change[]) => {
+    if (!list.length) return;
+    const at = Date.now();
+    setSaid((now) => [...list.map((c) => ({ who, text: c.text, at })).reverse(), ...now].slice(0, 40));
+  };
+  // Claude's changes, from the file, as they land
+  useEffect(() => {
+    if (!shared || !plan) return;
+    together.current = { saved: plan, file: "", history: [], undoing: false };
+    const check = async () => {
+      const mine = current.current;
+      if (!mine) return;
+      const text = await bridge.planFile(mine.id);
+      const t = together.current;
+      if (text == null || text === t.file) return;
+      t.file = text;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        return setShareProblem("Claude's last change couldn't be read. It'll show once it can be.");
+      }
+      const team = checkTeam(raw);
+      if (typeof team === "string") return setShareProblem(`Claude's last change couldn't be read: ${team}`);
+      setShareProblem("");
+      const theirs: Plan = { ...mine, name: team.name || mine.name, agents: team.agents, edges: team.edges };
+      // Ours, written a moment ago, or nothing that changes the team
+      if (sameTeam(theirs, mine)) return;
+      const unwritten = t.saved && !sameTeam(mine, t.saved);
+      tell("claude", changes(mine, theirs));
+      if (unwritten) tell("claude", [{ text: "changed it before your last edit was saved, so yours was set aside: Undo brings it back" }]);
+      t.history.push(mine);
+      t.saved = theirs;
+      setPlan(theirs);
+      setSaved(true);
+    };
+    check();
+    const timer = setInterval(check, 1000);
+    return () => clearInterval(timer);
+  }, [shared, plan?.id]);
+  // Ours, saved as they're made, for Claude to see
+  useEffect(() => {
+    const t = together.current;
+    if (!shared || !plan || !t.saved || sameTeam(plan, t.saved)) return;
+    const timer = setTimeout(() => {
+      const before = t.saved!;
+      if (t.undoing) tell("you", [{ text: "undid the last change" }]);
+      else {
+        t.history.push(before);
+        tell("you", changes(before, plan));
+      }
+      t.undoing = false;
+      t.saved = plan;
+      store(plan);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [plan, shared]);
+  const undo = () => {
+    const back = together.current.history.pop();
+    if (!back || !plan) return;
+    together.current.undoing = true;
+    setPlan({ ...back, id: plan.id });
+  };
+  const startSharing = async () => {
+    if (!plan) return;
+    if (!saved) await store(plan);
+    setSharing(true);
+  };
   /** A team from a file: saved as one of this Mac's, and opened. */
   const importPlan = async () => {
     setOpening(false);
@@ -1154,7 +1240,10 @@ export function PlannerWindow() {
     }
     // Following a team, the grid's the plan as it started, which isn't for editing
     if (watching || (e.target as Element).closest("input, textarea")) return;
-    if (e.metaKey && key === "a" && plan) {
+    if (e.metaKey && key === "z" && shared) {
+      e.preventDefault();
+      undo();
+    } else if (e.metaKey && key === "a" && plan) {
       e.preventDefault();
       setGroup(plan.agents.map((a) => a.id));
     } else if (e.key === "Backspace" || e.key === "Delete") {
@@ -1200,8 +1289,23 @@ export function PlannerWindow() {
       <div className="plan-toolbar" data-tauri-drag-region>
         <input className="template-name" value={plan.name} onChange={(e) => change({ ...plan, name: e.target.value })} title="Rename it" />
         <span className="plan-sub">
-          {[saved ? plan.updated && `Saved ${ago(plan.updated)}` : "Edited", `${plan.agents.length} agents`, counts].filter(Boolean).join(" · ")}
+          {[
+            shared ? "Saves as you go" : saved ? plan.updated && `Saved ${ago(plan.updated)}` : "Edited",
+            `${plan.agents.length} agents`,
+            counts,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
+        {shared && share && (
+          <span className="share-pill">
+            {share.icon && <Avatar icon={share.icon} size={18} />}
+            Planning with <b>{share.title}</b>
+            <button onClick={() => setShare(null)} title="Stop planning this with Claude">
+              Stop
+            </button>
+          </span>
+        )}
         <span className="ask-spacer" />
         <button className="ask-btn ghost" onClick={fresh} title="⌘N">
           New
@@ -1275,6 +1379,11 @@ export function PlannerWindow() {
           Save As…
         </button>
         <span className="toolbar-gap" />
+        {!shared && (
+          <button className="ask-btn ghost" disabled={watching} onClick={startSharing} title="Plan this team with Claude, in a chat">
+            Plan with Claude…
+          </button>
+        )}
         <button className="ask-btn ghost" disabled={watching} onClick={addAgent}>
           + Agent
         </button>
@@ -1323,7 +1432,9 @@ export function PlannerWindow() {
               change({ ...plan, edges: [...plan.edges, { from, to }] });
             }}
           />
-          {group.length ? (
+          {shared && share && !group.length && !selected ? (
+            <TogetherPanel share={share} said={said} problem={shareProblem} canUndo={together.current.history.length > 0} onUndo={undo} />
+          ) : group.length ? (
             <GroupInspector
               agents={plan.agents.filter((a) => group.includes(a.id))}
               onAgents={(changed) => change({ ...plan, agents: plan.agents.map((a) => changed.find((c) => c.id === a.id) ?? a) })}
@@ -1341,6 +1452,18 @@ export function PlannerWindow() {
         </div>
       )}
       {starting && <StartSheet plan={plan} onClose={() => setStarting(false)} />}
+      {sharing && (
+        <ShareSheet
+          plan={plan}
+          onClose={() => setSharing(false)}
+          onShared={(next) => {
+            setShare(next);
+            setSaid([]);
+            setSharing(false);
+            setSelected(null);
+          }}
+        />
+      )}
       {savingAs !== null && (
         <div className="sheet-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setSavingAs(null)}>
           <div className="sheet small">
