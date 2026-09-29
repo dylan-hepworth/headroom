@@ -366,6 +366,8 @@ struct State {
     approvals: Mutex<(bool, u64)>,
     /// The requests the popover has already opened for, so closing it keeps it closed until a new one comes in.
     seen_requests: Mutex<HashSet<String>>,
+    /// Finished turns put off with "Remind Me", by their request's ID: when they're back, and the card as it was
+    reminders: Mutex<HashMap<String, (i64, Value)>>,
     /// Does the popover open by itself when a session needs an answer? From Settings → Hooks.
     popover_auto: Mutex<bool>,
     /// Requests show in a few lines each, rather than on the whole card.
@@ -3148,7 +3150,26 @@ fn held_requests(state: &State) -> Vec<Value> {
     let extra = hooks::extra_time();
     // Hands-free, a finished turn held for a reply comes as a card of its own, when that's wanted
     let replies = hands_free_on(state) && *state.show_replies.lock().unwrap();
-    let held = state.sessions.lock().unwrap().held(hold_time(state), &extra, replies);
+    let mut held = state.sessions.lock().unwrap().held(hold_time(state), &extra, replies);
+    // Put off for later, a finished turn stays away till it's due. Then it's back as itself, if its turn's still held
+    // for a reply, or as a reminder of what Claude said, if it's not.
+    let now = Local::now().timestamp_millis();
+    let mut reminders = state.reminders.lock().unwrap();
+    held.retain(|r| r["id"].as_str().and_then(|id| reminders.get(id)).is_none_or(|(due, _)| *due <= now));
+    let is_held = |id: &str| held.iter().any(|r| r["id"] == id);
+    reminders.retain(|id, (due, _)| *due > now || !is_held(id));
+    let due: Vec<Value> = reminders
+        .iter()
+        .filter(|(id, (due, _))| *due <= now && !is_held(id))
+        .map(|(id, (_, card))| {
+            let mut card = card.clone();
+            card["id"] = format!("remind-{id}").into();
+            card["reminded"] = true.into();
+            card
+        })
+        .collect();
+    drop(reminders);
+    held.extend(due);
     with_icons(state, held, "session")
 }
 
@@ -3205,6 +3226,33 @@ fn set_icon(
 /// "answer:" and the answer for a question, or "terminal" for either, to hand it back to Claude Code's own prompt.
 /// "chat" hands it back too, and opens the session where it runs, to answer it there.
 fn answer(state: &State, id: &str, choice: &str) -> Result<(), String> {
+    // A reminder of a finished turn that's not held any more: what the user wrote went from the panel, so all that's
+    // left is to put it away, or open its chat
+    if let Some(original) = id.strip_prefix("remind-") {
+        let card = state.reminders.lock().unwrap().remove(original).map(|(_, card)| card);
+        if choice == "chat" {
+            let session = card.and_then(|c| c["session"].as_str().map(String::from)).ok_or("That reminder's gone")?;
+            hide_popover(&state.app);
+            open_session(state, &session, None);
+        }
+        sync_popover(state);
+        changed(state);
+        return Ok(());
+    }
+    // Put off for a while: the card goes, and comes back when it's due (see `held_requests`)
+    if let Some(minutes) = choice.strip_prefix("remind:").and_then(|m| m.parse::<i64>().ok()) {
+        let card = held_requests(state).into_iter().find(|r| r["id"] == id).ok_or("That chat stopped waiting")?;
+        let due = Local::now().timestamp_millis() + minutes.clamp(1, 24 * 60) * 60_000;
+        state.reminders.lock().unwrap().insert(id.to_string(), (due, card));
+        let app = state.app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(minutes.clamp(1, 24 * 60) as u64 * 60 + 1)).await;
+            sync_popover(&app.state::<Arc<State>>());
+        });
+        sync_popover(state);
+        changed(state);
+        return Ok(());
+    }
     if choice == "chat" {
         let (session, host) = {
             let sessions = state.sessions.lock().unwrap();
@@ -3797,6 +3845,7 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         recap: Mutex::new(recap),
         approvals: Mutex::new(approvals),
         seen_requests: Mutex::new(HashSet::new()),
+        reminders: Mutex::new(HashMap::new()),
         popover_auto: Mutex::new(popover_auto),
         compact_cards: Mutex::new(compact_cards),
         ask_next: Mutex::new(ask_next),

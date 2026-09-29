@@ -185,6 +185,9 @@
   align-items: center;
   height: 100%;
 }
+.loop-tag-box.start {
+  justify-content: flex-start;
+}
 .loop-tag {
   pointer-events: auto;
   cursor: pointer;

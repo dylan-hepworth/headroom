@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, IconPicker, type ChatIcon } from "./Avatar";
 import { bridge, type TeamRun } from "./bridge";
 import { SpokenField } from "./Voice";
+import { deliver } from "./deliver";
 import { changes, checkTeam, type Change } from "./planChanges";
 import { LivePanel, liveOf, RunBar } from "./Running";
 import { SteerPanel } from "./Steer";
@@ -498,8 +499,9 @@ export function Canvas({
                         <path className="wire-hit" d={loopPath(a, b)} />
                         <path className="wire-loop" d={loopPath(a, b)} markerEnd="url(#arrow)" />
                         {/* Wide enough for a long "until": the tag sits in the middle of it */}
-                        <foreignObject x={loopMiddle(a, b).x - 240} y={loopMiddle(a, b).y - 15} width={480} height={30}>
-                          <div className="loop-tag-box">
+                        {/* Kept inside the grid: a loop out to the left of the leftmost agent would have its tag cut off */}
+                        <foreignObject x={Math.max(4, loopMiddle(a, b).x - 240)} y={loopMiddle(a, b).y - 15} width={480} height={30}>
+                          <div className={loopMiddle(a, b).x - 240 < 4 ? "loop-tag-box start" : "loop-tag-box"}>
                             <div className="loop-tag">
                               {rounds?.[edgeId(e)]
                                 ? `↻ round ${rounds[edgeId(e)]} of ${e.loop.rounds}`
@@ -819,6 +821,8 @@ function Inspector({
 
 /** A chat the plan can go to, and how it gets there: after the step it's on, as the reply to its finished turn, or
  *  copied, to paste in there. */
+export { deliver };
+
 export type Chat = { id: string; title: string; project: string; icon?: ChatIcon; takes: "working" | "reply" | null };
 
 /** Every chat Headroom knows about, the ones that can take a message now first. */
@@ -836,19 +840,6 @@ export function useChats(): Chat[] {
     });
   }, []);
   return chats;
-}
-
-/** Give a chat some words: straight in, if it's at work or its finished turn is held for a reply, or copied, with the
- *  chat opened to paste them into. Says which. */
-export async function deliver(chat: string, text: string): Promise<"sent" | "copied"> {
-  const now = (await bridge.pendingSessions()).find((p) => p.id === chat);
-  if (now && (now.state === "working" || now.replyId)) {
-    await bridge.sendToSession(chat, text);
-    return "sent";
-  }
-  await navigator.clipboard.writeText(text);
-  await bridge.openPending(chat);
-  return "copied";
 }
 
 /** Where the plan goes: a chat that can take it now (at work, or finished with its turn held open for a reply), after

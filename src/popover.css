@@ -1944,3 +1944,28 @@ html.popover-page .popover-window {
     Menlo,
     monospace;
 }
+
+/* "Remind me later" on a reply card: a clock, with the system's own menu over it, unseen */
+.ask-btn.remind-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.remind-pick select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* A reply card has one more button than the others, so its row sits closer */
+.reply-buttons {
+  gap: 2px;
+}
+.reply-buttons .ask-btn.ghost {
+  padding: 0 8px;
+}
+.reply-buttons .ask-btn.ask-open {
+  margin-left: -8px;
+}

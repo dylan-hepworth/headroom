@@ -18,6 +18,7 @@ import React, {
 import { Avatar, choosePicture, previewIcon, type ChatIcon } from "./Avatar";
 import { MicButton, useVoice, Waveform, type Listening } from "./Voice";
 import { bridge, type Made } from "./bridge";
+import { deliver } from "./deliver";
 import { MadeStrip } from "./Made";
 import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
@@ -76,6 +77,8 @@ export type Ask =
       prompt?: string;
       recent?: Recent[];
       made?: Made[];
+      /** Back from "Remind Me" once its turn stopped being held: what's written goes to the chat however it can */
+      reminded?: boolean;
     };
 
 /** A card that's been answered, as it was, so it can show its receipt (or dissolve) even after the request is gone
@@ -313,11 +316,13 @@ function Header({ ask, glyph }: { ask: Ask; glyph: ReactNode }) {
             <span className="ask-project-name">{ask.project}</span>
           </span>
           <span className={left < RED_ZONE * ask.hold ? "ask-left urgent" : "ask-left"}>
-            {paused
-              ? `paused at ${clock(left)}`
-              : ask.kind === "reply"
-                ? `waits ${clock(left)}`
-                : `${ask.inChat ? "chat" : "terminal"} in ${clock(left)}`}
+            {ask.kind === "reply" && ask.reminded
+              ? "reminder"
+              : paused
+                ? `paused at ${clock(left)}`
+                : ask.kind === "reply"
+                  ? `waits ${clock(left)}`
+                  : `${ask.inChat ? "chat" : "terminal"} in ${clock(left)}`}
           </span>
         </div>
       </div>
@@ -506,7 +511,10 @@ function ReplyCard({
     try {
       // All a session can take from here is words, so the images go where Claude can read them
       const paths = await Promise.all(images.map(attach));
-      answer(`reply:${[text.trim(), ...paths.map((path) => `see the image at ${path}`)].filter(Boolean).join(", ")}`);
+      const message = [text.trim(), ...paths.map((path) => `see the image at ${path}`)].filter(Boolean).join(", ");
+      // Back as a reminder, its turn isn't held for this any more: in if the chat can take it, or copied to paste
+      if (ask.reminded && ask.session) answer((await deliver(ask.session, message)) === "sent" ? `reply:${message}` : "copied");
+      else answer(`reply:${message}`);
     } catch (e) {
       setProblem(`Couldn't send it: ${e instanceof Error ? e.message : String(e)}`);
       setSending(false);
@@ -526,9 +534,23 @@ function ReplyCard({
         onSend={send}
       />
       {problem && <div className="ask-problem">{problem}</div>}
-      <div className="ask-buttons">
+      <div className="ask-buttons reply-buttons">
         <OpenButton ask={ask} onOpen={() => answer("chat")} />
         <span className="ask-spacer" />
+        {/* A clock that opens the menu: the menu itself sits over it, unseen, so it's the system's own */}
+        <label className="ask-btn ghost remind-pick" title="Remind me later">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+            <circle cx="8" cy="8.5" r="5.5" />
+            <path d="M8 5.5v3l2 1.5M3.5 2.5 2 4M12.5 2.5 14 4" />
+          </svg>
+          <select value="" aria-label="Remind me later" onChange={(e) => e.target.value && answer(`remind:${e.target.value}`)}>
+            <option value="">Remind me…</option>
+            <option value="5">In 5 minutes</option>
+            <option value="15">In 15 minutes</option>
+            <option value="30">In 30 minutes</option>
+            <option value="60">In an hour</option>
+          </select>
+        </label>
         <button
           className="ask-btn ghost"
           title="Nothing's sent, and it comes off the list"
@@ -539,8 +561,8 @@ function ReplyCard({
         >
           That's All for Now
         </button>
-        <button className="ask-btn primary" disabled={sending || empty} onClick={send}>
-          Send <kbd>↩</kbd>
+        <button className="ask-btn primary" disabled={sending || empty} onClick={send} title="↩ in the box sends it too">
+          Send
         </button>
       </div>
     </>
@@ -976,6 +998,11 @@ function receipt(choice: string, failed: boolean | undefined, place: string): { 
   if (choice === "deny") return { text: "Denied", good: false };
   if (choice === "terminal") return { text: "Sent to the terminal", good: true };
   if (choice.startsWith("reply:")) return { text: "Sent", good: true };
+  if (choice === "copied") return { text: "Copied: paste it into the chat", good: true };
+  if (choice.startsWith("remind:")) {
+    const at = new Date(Date.now() + Number(choice.slice(7)) * 60_000);
+    return { text: `It'll be back at ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`, good: true };
+  }
   return { text: "Answer sent", good: true };
 }
 
@@ -1264,7 +1291,8 @@ export function Popover({
 
   // When the one on top runs out of time, it goes to the terminal
   useEffect(() => {
-    if (top && !answered && !paused && now >= top.until) finish(top, "terminal");
+    const reminder = top?.kind === "reply" && top.reminded;
+    if (top && !reminder && !answered && !paused && now >= top.until) finish(top, "terminal");
   }, [now, top, answered, paused, finish]);
 
   // Moving through the stack: the card on top swipes away to the left and the next one rises from behind, or the
@@ -1436,7 +1464,7 @@ export function Popover({
             answer={answer}
           />
         )}
-        <Countdown until={ask.until} hold={ask.hold} />
+        {!(ask.kind === "reply" && ask.reminded) && <Countdown until={ask.until} hold={ask.hold} />}
       </>
     );
   const dissolving = !!answered && handedBack(answered.choice);
