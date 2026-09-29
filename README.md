@@ -84,7 +84,7 @@ Headroom shows your 5-hour and weekly usage right in the menu bar, so you know h
 The menu shows when each one resets, and Settings has the rest:
 
 - **Pace**: how far through each window you are, and whether you'll hit the limit at the rate you're going. Turn on **Pace arrows** and each limit gets a little arrow, up in orange when you're using it faster than the window is going by and down in green when you've got room to spare, in the menu bar and in Settings.
-- **Alerts**: one notification when either limit passes a level you pick, not one on every check.
+- **Alerts**: one notification when either limit passes a level you pick, not one on every check. The notification has buttons to move the alert to a level still ahead, like 70%, 80%, or 90%.
 - **Usage by project**: each project's rough share of your Claude Code use in the current 5-hour window, from the transcripts on this Mac (so claude.ai and your other Macs aren't counted).
 - **Daily recap**: a notification each evening you've used Claude Code, with the time you spent, your top projects, your 5-hour peak, and how far your weekly usage went up.
 
@@ -207,6 +207,10 @@ macOS asks once to let Headroom use the microphone and speech recognition.
 </p>
 
 **Add to a Chat…** hands the plan to a Claude Code chat you pick, which becomes the Lead. Each manager runs as a Claude Code session of its own, in the background, in the Lead's folder, with its workers as its subagents. It gets only the tools its boxes allow, anything else is refused rather than asked about, and it reports back to the Lead's chat when it's done. While they work, the planner follows them on the same grid: what each agent's doing, the round each loop's on, each manager's report as it comes in, and a box to message the Lead or a manager. Stop them all from there, or by quitting Headroom. Teams are saved as templates, so **New**, **Open**, **Save**, and **Save As…** work like they do in any document app, and a starting example is there to pull apart. **Export…** and **Import…**, in the same menu, pass a team along as a file.
+
+**Plan with Claude…** shares the plan with a chat, which is told where the plan's file is and how to change it. What Claude changes shows on the grid as it lands, what you change goes into the same file for Claude to see, and the panel lists who changed what, with **Undo** for the last change, whoever made it. A shared plan saves as it's changed.
+
+A team that's at work can be changed too. **Change**, in its bar, lets you edit the grid, with each change outlined, and **Send Changes** takes them to whoever they're for: a manager fits its team's changes in after its current step (a new worker runs as a general-purpose subagent, with its own instructions and model), a new manager starts, a removed one stops, and the Lead hears what changed. What a running session can't take, like a worker that needs a tool its manager wasn't started with, is said rather than sent.
 
 The grid zooms with a pinch, ⌘+ and ⌘−, or the buttons in its corner, and pans with a scroll, or a drag with the space bar held. Drag across it to pick several agents (or ⇧-click them, or ⌘A), then drag any of them to move them all, give them all one model, or delete them together.
 
