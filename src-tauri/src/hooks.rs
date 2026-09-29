@@ -617,11 +617,10 @@ fn clip_to(text: &str, max: usize, from_end: bool) -> String {
 fn holds_for_reply(event: &Value) -> bool {
     let waiting_on_work = |key: &str| event[key].as_array().is_some_and(|a| !a.is_empty());
     // Only where going to the session can end the wait: when the hook can tell which app it runs in (not over ssh,
-    // say). And not a Claude app chat that's the one open there, whose reply shows the moment the user's back.
+    // say). A chat that's merely the one open in the Claude app is held too, like a question: only one the user's
+    // looking at right now isn't (see `watching`), and the hold lets go if they go to it (see `looked_at`).
     let findable = std::env::var("__CFBundleIdentifier").is_ok();
-    let open_there = host_chat().is_some_and(|chat| from_app("open_chat").as_deref() == Some(chat.as_str()));
     findable
-        && !open_there
         && hands_free()
         && waited_on()
         && attended()
