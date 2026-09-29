@@ -1372,7 +1372,10 @@ fn keep(event: &Value) -> Value {
             if let Some(worker) = event["agent_type"].as_str() {
                 out.insert("worker".into(), worker.into());
             }
-        } else if let Some(worker) = event["tool_input"]["subagent_type"].as_str() {
+        } else if matches!(event["tool_name"].as_str(), Some("Agent" | "Task")) {
+            // Handed to one of its workers, or, with none named, a general-purpose subagent (like a worker the user
+            // added while it worked)
+            let worker = event["tool_input"]["subagent_type"].as_str().unwrap_or("general-purpose");
             out.insert("handed".into(), worker.into());
             // The model it was handed to, when the manager picked one: how a change to a worker's model mid-run shows
             if let Some(model) = event["tool_input"]["model"].as_str() {
