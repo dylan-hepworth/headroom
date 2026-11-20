@@ -50,7 +50,7 @@ fn hidden(path: &Path) -> bool {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    crate::platform::home()
 }
 
 /// Where a path from a tool or a reply is, if it's a file that's there and not somewhere hidden: from the home folder
@@ -60,7 +60,7 @@ pub fn place(path: &str, cwd: &Path) -> Option<String> {
         Some(rest) => home()?.join(rest),
         None => cwd.join(path),
     };
-    let real = std::fs::canonicalize(path).ok()?;
+    let real = crate::platform::plain(std::fs::canonicalize(path).ok()?);
     (real.is_file() && !hidden(&real)).then(|| real.to_string_lossy().into_owned())
 }
 

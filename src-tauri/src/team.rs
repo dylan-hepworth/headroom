@@ -9,7 +9,6 @@
 
 use std::{
     collections::BTreeMap,
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -137,6 +136,7 @@ pub fn valid(m: &Manager) -> Result<(), String> {
 
 /// Where `claude` is: where the user's login shell finds it, as a terminal would, or failing that, the newest one the
 /// Claude app keeps.
+#[cfg(not(windows))]
 pub fn claude() -> Option<PathBuf> {
     static FOUND: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     FOUND
@@ -159,6 +159,41 @@ pub fn claude() -> Option<PathBuf> {
         .clone()
 }
 
+/// Where `claude` is on Windows: where `where` finds it on the PATH, or where its installers put it. The native
+/// installer's claude.exe is best. An npm install only has a .cmd script, which can't safely be handed a prompt, so
+/// that's run as the Node script it starts.
+#[cfg(windows)]
+pub fn claude() -> Option<PathBuf> {
+    static FOUND: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let mut found: Vec<PathBuf> = vec![];
+            let mut which = Command::new("where");
+            if let Ok(out) = crate::platform::quiet(which.arg("claude")).output() {
+                found.extend(String::from_utf8_lossy(&out.stdout).lines().map(|l| PathBuf::from(l.trim())));
+            }
+            let home = crate::platform::home();
+            found.extend(home.iter().map(|h| h.join(".local/bin/claude.exe")));
+            let exe = found.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && p.exists());
+            exe.cloned().or_else(|| {
+                let npm = PathBuf::from(std::env::var_os("APPDATA")?).join("npm/node_modules/@anthropic-ai/claude-code");
+                Some(npm.join("cli.js")).filter(|p| p.exists())
+            })
+        })
+        .clone()
+}
+
+/// A command that runs `claude`, wherever it is.
+fn claude_command() -> Option<Command> {
+    let claude = claude()?;
+    if claude.extension().is_some_and(|e| e == "js") {
+        let mut node = Command::new("node");
+        node.arg(claude);
+        return Some(node);
+    }
+    Some(Command::new(claude))
+}
+
 /// Start a manager. Returns its process ID and session ID, and hands its final report to `done` when it's finished.
 pub fn start(
     run: &str,
@@ -167,10 +202,9 @@ pub fn start(
     done: impl FnOnce(Result<String, String>) + Send + 'static,
 ) -> Result<(i32, String), String> {
     valid(m)?;
-    let claude = claude().ok_or("Headroom can't find Claude Code. Is `claude` installed?")?;
+    let mut command = claude_command().ok_or("Headroom can't find Claude Code. Is `claude` installed?")?;
     let session = uuid();
     let agents = serde_json::to_string(&m.agents).map_err(|e| e.to_string())?;
-    let mut command = Command::new(claude);
     command
         .current_dir(cwd)
         .args(["-p", &m.prompt, "--model", &m.model, "--permission-mode", "dontAsk"])
@@ -184,9 +218,13 @@ pub fn start(
         .env("HEADROOM_TEAM", format!("{run}:{}", m.agent))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Its own process group, so stopping it stops what it's running too
-        .process_group(0);
+        .stderr(Stdio::piped());
+    // Its own process group, so stopping it stops what it's running too
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    // No console window for it; stopping it stops everything under it (see `stop`)
+    #[cfg(windows)]
+    crate::platform::quiet(&mut command);
     let child = command.spawn().map_err(|e| format!("Couldn't start {}: {e}", m.name))?;
     let pid = child.id() as i32;
     std::thread::spawn(move || {
@@ -205,11 +243,7 @@ pub fn start(
 
 /// Stop a manager, and whatever it's running.
 pub fn stop(pid: i32) {
-    unsafe extern "C" {
-        fn kill(pid: i32, sig: i32) -> i32;
-    }
-    // SAFETY: signals the process group this started for the manager, which is never Headroom's own
-    unsafe { kill(-pid, 15) };
+    crate::platform::stop_group(pid, false);
 }
 
 /// A random UUID, for a session's ID.
@@ -222,9 +256,23 @@ fn uuid() -> String {
     format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
+#[cfg(unix)]
 fn getrandom(bytes: &mut [u8]) -> std::io::Result<()> {
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+/// Windows has no /dev/urandom. The standard library's hash keys come from the system's random number generator, so
+/// a few of them, each fresh, are the random bytes.
+#[cfg(windows)]
+fn getrandom(bytes: &mut [u8]) -> std::io::Result<()> {
+    use std::hash::{BuildHasher, Hasher};
+    for chunk in bytes.chunks_mut(8) {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(0);
+        chunk.copy_from_slice(&h.finish().to_le_bytes()[..chunk.len()]);
+    }
+    Ok(())
 }
 
 impl Teams {

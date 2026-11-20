@@ -18,6 +18,7 @@ import { changes, checkTeam, type Change } from "./planChanges";
 import { LivePanel, liveOf, RunBar } from "./Running";
 import { SteerPanel } from "./Steer";
 import { keepShare, savedShare, ShareSheet, TogetherPanel, type Said, type Share } from "./Together";
+import { keys as shortcut, primary } from "./platform";
 import "./plan.css";
 import "./popover.css";
 
@@ -371,13 +372,13 @@ export function Canvas({
     };
     const typing = (e: KeyboardEvent) => !!(e.target as Element).closest?.("input, textarea, [contenteditable]");
     const down = (e: KeyboardEvent) => {
-      if (e.metaKey && (e.key === "=" || e.key === "+")) {
+      if (primary(e) && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
         zoomer.current(scale.current * 1.25);
-      } else if (e.metaKey && e.key === "-") {
+      } else if (primary(e) && e.key === "-") {
         e.preventDefault();
         zoomer.current(scale.current / 1.25);
-      } else if (e.metaKey && e.key === "0") {
+      } else if (primary(e) && e.key === "0") {
         e.preventDefault();
         zoomer.current(1);
       } else if (e.key === " " && !typing(e)) {
@@ -586,13 +587,13 @@ export function Canvas({
         </div>
       </div>
       <div className="grid-zoom">
-        <button onClick={() => zoomTo(zoom / 1.25)} title="Zoom Out (⌘−)" disabled={zoom <= ZOOM.min}>
+        <button onClick={() => zoomTo(zoom / 1.25)} title={`Zoom Out (${shortcut("⌘−")})`} disabled={zoom <= ZOOM.min}>
           −
         </button>
-        <button className="grid-zoom-level" onClick={() => zoomTo(1)} title="Actual Size (⌘0)">
+        <button className="grid-zoom-level" onClick={() => zoomTo(1)} title={`Actual Size (${shortcut("⌘0")})`}>
           {Math.round(zoom * 100)}%
         </button>
-        <button onClick={() => zoomTo(zoom * 1.25)} title="Zoom In (⌘+)" disabled={zoom >= ZOOM.max}>
+        <button onClick={() => zoomTo(zoom * 1.25)} title={`Zoom In (${shortcut("⌘+")})`} disabled={zoom >= ZOOM.max}>
           +
         </button>
       </div>
@@ -1248,7 +1249,7 @@ export function PlannerWindow() {
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     const key = e.key.toLowerCase();
-    if (e.metaKey && ["s", "n", "o"].includes(key)) {
+    if (primary(e) && ["s", "n", "o"].includes(key)) {
       e.preventDefault();
       if (key === "s" && e.shiftKey && plan)
         setSavingAs(
@@ -1270,10 +1271,10 @@ export function PlannerWindow() {
     }
     // Following a team, the grid's the plan as it's running, which isn't for editing
     if (watching) return;
-    if (e.metaKey && key === "z" && shared) {
+    if (primary(e) && key === "z" && shared) {
       e.preventDefault();
       undo();
-    } else if (e.metaKey && key === "a" && plan) {
+    } else if (primary(e) && key === "a" && plan) {
       e.preventDefault();
       setGroup(plan.agents.map((a) => a.id));
     } else if (e.key === "Backspace" || e.key === "Delete") {
@@ -1333,11 +1334,11 @@ export function PlannerWindow() {
           </span>
         )}
         <span className="ask-spacer" />
-        <button className="ask-btn ghost" onClick={fresh} title="⌘N">
+        <button className="ask-btn ghost" onClick={fresh} title={shortcut("⌘N")}>
           New
         </button>
         <div className="template">
-          <button className="ask-btn ghost" onClick={() => setOpening(!opening)} title="⌘O">
+          <button className="ask-btn ghost" onClick={() => setOpening(!opening)} title={shortcut("⌘O")}>
             Open <span className="menu-caret">▾</span>
           </button>
           {opening && (
@@ -1387,7 +1388,7 @@ export function PlannerWindow() {
             </div>
           )}
         </div>
-        <button className="ask-btn ghost" disabled={saved} onClick={save} title="⌘S">
+        <button className="ask-btn ghost" disabled={saved} onClick={save} title={shortcut("⌘S")}>
           Save
         </button>
         <button
@@ -1400,7 +1401,7 @@ export function PlannerWindow() {
               ),
             )
           }
-          title="⇧⌘S"
+          title={shortcut("⇧⌘S")}
         >
           Save As…
         </button>

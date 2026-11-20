@@ -46,7 +46,7 @@ pub struct Desktop {
 impl Desktop {
     /// Catch up on the app's log. Returns whether a different chat is open now.
     pub fn follow_log(&mut self) -> bool {
-        let Some(path) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Logs/Claude/main.log")) else {
+        let Some(path) = crate::platform::claude_app_log() else {
             return false;
         };
         let Ok(mut file) = File::open(path) else { return false };
@@ -118,8 +118,7 @@ impl Desktop {
             return None;
         }
         self.indexed = Some(Instant::now());
-        let root =
-            PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/Claude/claude-code-sessions");
+        let root = crate::platform::claude_app_dir()?.join("claude-code-sessions");
         for dir in std::fs::read_dir(root).ok()?.flatten() {
             for sub in std::fs::read_dir(dir.path()).into_iter().flatten().flatten() {
                 for file in std::fs::read_dir(sub.path()).into_iter().flatten().flatten() {

@@ -25,6 +25,7 @@ import {
   Terminal,
 } from "./icons";
 import { score, type Hit } from "./searchMatch";
+import { BAR } from "./platform";
 
 export type PaneId = "general" | "usage" | "alerts" | "sessions" | "hooks" | "recap" | "menu_bar";
 
@@ -57,7 +58,7 @@ export const SETTINGS: Setting[] = [
     pane: "general",
     title: "Sign in",
     tile: ["yellow", icon(Key)],
-    words: "token claude code login setup-token keychain account",
+    words: "token claude code login setup-token keychain credential manager account",
     at: { section: "Sign In" },
   },
   {
@@ -65,7 +66,7 @@ export const SETTINGS: Setting[] = [
     title: "Open at login",
     tile: ["gray", icon(Power)],
     section: "General",
-    detail: "Waits in the menu bar.",
+    detail: `Waits in the ${BAR}.`,
     words: "launch startup start boot",
   },
   {
@@ -159,7 +160,7 @@ export const SETTINGS: Setting[] = [
   { pane: "hooks", title: "Hooks", tile: ["purple", icon(Hook)], words: "claude code settings.json install" },
   {
     pane: "hooks",
-    title: "Approve from the menu bar",
+    title: `Approve from the ${BAR}`,
     tile: ["green", icon(Shield)],
     section: "Approvals",
     words: "approvals allow deny permission popover panel answer",
@@ -234,7 +235,12 @@ export const SETTINGS: Setting[] = [
   { pane: "recap", title: "Send it at", tile: ["teal", icon(Calendar)], words: "time evening" },
   { pane: "recap", title: "Today so far", tile: ["teal", icon(Calendar)], words: "today summary", at: { section: "Today So Far" } },
 
-  { pane: "menu_bar", title: "Shows", tile: ["blue", icon(MenuBar)], words: "title numbers percent rings three rings fable 5-hour weekly menu bar" },
+  {
+    pane: "menu_bar",
+    title: "Shows",
+    tile: ["blue", icon(MenuBar)],
+    words: "title numbers percent rings three rings fable 5-hour weekly menu bar taskbar tray icon",
+  },
   { pane: "menu_bar", title: "Usage ring", tile: ["clay", icon(Sparkle)], words: "icon progress circle" },
   { pane: "menu_bar", title: "Sessions waiting on you", tile: ["orange", icon(Hourglass)], words: "dots count yellow blue" },
 ];

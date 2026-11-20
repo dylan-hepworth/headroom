@@ -11,6 +11,7 @@ import Sessions from "./panes/Sessions";
 import Hooks from "./panes/Hooks";
 import Recap from "./panes/Recap";
 import MenuBar from "./panes/MenuBar";
+import { WINDOWS, primary } from "./platform";
 
 /** Changing a setting resolves to why it couldn't be changed, or null when it was. */
 export type PaneProps = { app: AppState; settings: Settings; set: <K extends keyof Settings>(key: K, value: Settings[K]) => Promise<string | null> };
@@ -85,7 +86,7 @@ const GROUPS: { heading?: string; panes: Pane[] }[] = [
     panes: [
       {
         id: "menu_bar",
-        title: "Menu Bar",
+        title: WINDOWS ? "Taskbar" : "Menu Bar",
         tile: "blue",
         icon: <MenuBarIcon />,
         view: (p) => <MenuBar {...p} />,
@@ -117,10 +118,10 @@ function useSearch(open: (r: Result) => void) {
   const field = useRef<HTMLInputElement>(null);
   const results = useMemo(() => searchSettings(query), [query]);
   useEffect(() => setSelected(0), [query]);
-  // ⌘F, as in every Mac app with a search field
+  // ⌘F, as in every Mac app with a search field, or Ctrl+F on Windows
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "f") {
+      if (primary(e) && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         field.current?.focus();
         field.current?.select();

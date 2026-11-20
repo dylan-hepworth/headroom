@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "windows": {
+      "nsis": { "installMode": "currentUser", "installerIcon": "icons/icon.ico", "installerHooks": "windows/installer-hooks.nsh" }
+    }
+  }
+}

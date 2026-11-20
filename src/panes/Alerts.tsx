@@ -2,6 +2,7 @@ import type { PaneProps } from "../App";
 import { bridge } from "../bridge";
 import { Bell, Chat, Check, Gauge, Layers, Refresh } from "../icons";
 import { Popup, Row, Section, Switch } from "../ui";
+import { BAR, WINDOWS } from "../platform";
 
 const LEVELS = [
   ["off", "Off"],
@@ -36,7 +37,7 @@ export default function Alerts({ settings, set }: PaneProps) {
             <Row
               tile={["gray", <Bell />]}
               title={settings.paused.until ? `Paused until ${settings.paused.until}` : "Paused"}
-              detail="No alerts go out, and requests go to each session's own prompt instead of the menu bar. Pause again from the menu bar's menu."
+              detail={`No alerts go out, and requests go to each session's own prompt instead of the ${BAR}. Pause again from the ${BAR} icon's menu.`}
             >
               <button className="btn" onClick={() => set("paused", null)}>
                 Resume
@@ -68,7 +69,7 @@ export default function Alerts({ settings, set }: PaneProps) {
           <Row
             tile={["yellow", <Chat />]}
             title="A session needs an answer"
-            detail="It's asking permission, or asking you a question. Not when the menu bar panel opens for it, or it's the chat you have open."
+            detail={`It's asking permission, or asking you a question. Not when the ${BAR} panel opens for it, or it's the chat you have open.`}
           >
             <Switch
               checked={settings.notifyWaiting}
@@ -120,7 +121,13 @@ export default function Alerts({ settings, set }: PaneProps) {
         </div>
       </Section>
 
-      <Section note="macOS asks whether Headroom can send notifications. If you missed it, Send Test Alert asks again.">
+      <Section
+        note={
+          WINDOWS
+            ? "Notifications are on unless they're turned off for Headroom in Windows Settings. Send Test Alert shows one."
+            : "macOS asks whether Headroom can send notifications. If you missed it, Send Test Alert asks again."
+        }
+      >
         <div className="group">
           <Row
             tile={["gray", <Bell />]}
@@ -132,8 +139,12 @@ export default function Alerts({ settings, set }: PaneProps) {
           {settings.persistentAlerts && (
             <Row
               inset
-              title="macOS has to allow it too"
-              detail="Set Headroom's alert style to Persistent in System Settings, if it isn't already. Apps can't change that themselves."
+              title={WINDOWS ? "Windows keeps them in its notification center" : "macOS has to allow it too"}
+              detail={
+                WINDOWS
+                  ? "How long each one stays on screen is up to Windows, in Settings → Accessibility → Visual effects."
+                  : "Set Headroom's alert style to Persistent in System Settings, if it isn't already. Apps can't change that themselves."
+              }
             >
               <button className="btn" onClick={() => bridge.openNotificationSettings()}>
                 Open Settings…

@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "resources": { "icons/Assets.car": "Assets.car" },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "Entitlements.plist",
+      "dmg": {
+        "background": "icons/dmg-background.tiff",
+        "windowSize": { "width": 660, "height": 500 },
+        "appPosition": { "x": 150, "y": 185 },
+        "applicationFolderPosition": { "x": 510, "y": 185 }
+      }
+    }
+  }
+}

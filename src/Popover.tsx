@@ -24,6 +24,7 @@ import { Markdown, MarkdownSnippet } from "./markdown";
 import { PendingList, type Pending } from "./Pending";
 import { TalkPanel } from "./Talk";
 import { Ring } from "./ui";
+import { keys, primary } from "./platform";
 import "./popover.css";
 
 export type Ask =
@@ -372,7 +373,7 @@ function PermissionCard({ ask, answer }: { ask: Extract<Ask, { kind: "permission
         <span className="ask-spacer" />
         {ask.canSession && (
           <button className="ask-btn" onClick={() => answer("session")} title="Don't ask again for this until the session ends">
-            Allow for Session <kbd>⌘↩</kbd>
+            Allow for Session <kbd>{keys("⌘↩")}</kbd>
           </button>
         )}
         <button className="ask-btn primary" onClick={() => answer("allow")}>
@@ -1026,10 +1027,25 @@ const RADIUS = 14;
 
 /** The outline of the whole panel as one path: a rounded rectangle with the arrow rising out of its top edge. The
  *  arrow's sides curve out into the edge, the way macOS draws a popover, so the edge line never breaks. `arrow` is the
- *  arrow's point, from the left. */
+ *  arrow's point, from the left. Past the right edge, there's no arrow: on Windows the panel stands over the taskbar on
+ *  its own, the way Windows' own panels do (the app says so with an arrow of -1 from the right). */
 export function outline(width: number, height: number, arrow: number) {
   const a = ARROW_HEIGHT;
   const r = RADIUS;
+  if (arrow > width) {
+    return [
+      `M ${r} ${a}`,
+      `L ${width - r} ${a}`,
+      `A ${r} ${r} 0 0 1 ${width} ${a + r}`,
+      `L ${width} ${height - r}`,
+      `A ${r} ${r} 0 0 1 ${width - r} ${height}`,
+      `L ${r} ${height}`,
+      `A ${r} ${r} 0 0 1 0 ${height - r}`,
+      `L 0 ${a + r}`,
+      `A ${r} ${r} 0 0 1 ${r} ${a}`,
+      "Z",
+    ].join(" ");
+  }
   const x = Math.min(Math.max(arrow, r + ARROW_HALF_WIDTH), width - r - ARROW_HALF_WIDTH);
   const w = ARROW_HALF_WIDTH;
   return [
@@ -1384,8 +1400,8 @@ export function Popover({
       }
       return;
     }
-    if (e.key === "Enter" && e.metaKey && top.canSession) answer("session");
-    else if (e.key === "Enter" && !e.metaKey) answer("allow");
+    if (e.key === "Enter" && primary(e) && top.canSession) answer("session");
+    else if (e.key === "Enter" && !primary(e)) answer("allow");
     else if (e.key === "Escape") answer("deny");
   };
   useEffect(() => {

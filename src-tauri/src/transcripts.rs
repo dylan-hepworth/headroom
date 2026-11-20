@@ -35,7 +35,7 @@ pub struct Transcripts {
 impl Transcripts {
     /// Every reply since `since`, from every Claude Code session on this Mac.
     pub fn since(&mut self, since: DateTime<Local>) -> Vec<Reply> {
-        let Some(root) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude/projects")) else {
+        let Some(root) = crate::platform::claude_dir().map(|d| d.join("projects")) else {
             return vec![];
         };
         let cutoff = SystemTime::from(since);
@@ -105,6 +105,7 @@ fn read(path: &Path) -> Vec<Reply> {
 /// (`repo/.claude/worktrees/name`) counts as the repo it belongs to.
 pub fn project(cwd: &str) -> String {
     let path = cwd.split("/.claude/worktrees/").next().unwrap_or(cwd);
+    let path = path.split("\\.claude\\worktrees\\").next().unwrap_or(path);
     Path::new(path).file_name().map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
 }
 

@@ -6,6 +6,7 @@ import { VoicePreview } from "./VoicePreview";
 import { PlannerWindow } from "./Planner";
 import { PopoverPreview, PopoverWindow } from "./Popover";
 import { inApp } from "./bridge";
+import { WINDOWS } from "./platform";
 import "./styles.css";
 
 const popover = location.search.includes("popover");
@@ -13,6 +14,11 @@ const popover = location.search.includes("popover");
 // The popover's window is see-through around the panel
 if (popover) {
   document.documentElement.classList.add("popover-page");
+}
+
+// Windows draws its own title bar, uses its own font, and has no arrow on a panel from the taskbar (see `html.windows`)
+if (WINDOWS) {
+  document.documentElement.classList.add("windows");
 }
 
 // In a plain browser there's no native window around the page, so the stylesheet draws one (see `html.browser`)

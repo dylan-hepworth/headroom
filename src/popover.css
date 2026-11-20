@@ -1969,3 +1969,29 @@ html.popover-page .popover-window {
 .reply-buttons .ask-btn.ask-open {
   margin-left: -8px;
 }
+
+/* On Windows the panel stands over the taskbar and grows upward from it (see place_popover in main.rs), so the room
+   for its shadow is above it, and only a little is left below, where the taskbar is: the window can't reach over the
+   taskbar without catching clicks meant for it. It opens upward too. */
+html.windows.popover-page .popover-window {
+  padding: 40px 40px 12px;
+}
+html.windows .popover-fade {
+  transform-origin: 50% 100%;
+}
+html.windows .popover-wrap {
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+html.windows .popover-fade {
+  animation-name: pop-open-up;
+}
+@keyframes pop-open-up {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+  }
+  to {
+    opacity: 1;
+  }
+}

@@ -162,7 +162,7 @@ impl Transcript {
 
 /// A session's transcript: ~/.claude/projects/<folder>/<session id>.jsonl, in whichever project folder it's in.
 fn find_transcript(session: &str) -> Option<PathBuf> {
-    let root = PathBuf::from(std::env::var_os("HOME")?).join(".claude/projects");
+    let root = crate::platform::claude_dir()?.join("projects");
     let name = format!("{session}.jsonl");
     std::fs::read_dir(root).ok()?.flatten().map(|dir| dir.path().join(&name)).find(|p| p.is_file())
 }

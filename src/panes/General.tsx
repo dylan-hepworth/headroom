@@ -4,6 +4,7 @@ import { bridge, type Limit, type LimitKey } from "../bridge";
 import { Clock, Download, Info, Key, Mic, Power, Refresh } from "../icons";
 import { Dial, PaceArrow, paceOf, Popup, Row, Section, Switch, useDialReading } from "../ui";
 import { ShortcutField } from "../Voice";
+import { BAR, WINDOWS } from "../platform";
 
 const INTERVALS = [
   [30, "30 seconds"],
@@ -108,7 +109,9 @@ export default function General({ app, settings, set }: PaneProps) {
           </div>
         )}
         <div className="hero-footer">
-          <div className="hero-note">Headroom checks {EVERY[settings.interval] ?? "regularly"} and shows this in the menu bar.</div>
+          <div className="hero-note">
+            Headroom checks {EVERY[settings.interval] ?? "regularly"} and shows this in the {BAR}.
+          </div>
           <button className="btn" onClick={() => bridge.refresh()}>
             Refresh Now
           </button>
@@ -122,7 +125,7 @@ export default function General({ app, settings, set }: PaneProps) {
 
       <Section title="General">
         <div className="group">
-          <Row tile={["gray", <Power />]} title="Open at login" detail="Waits in the menu bar.">
+          <Row tile={["gray", <Power />]} title="Open at login" detail={`Waits in the ${BAR}.`}>
             <Switch checked={settings.launchAtLogin} onChange={(v) => set("launchAtLogin", v)} label="Open at login" />
           </Row>
           <Row
@@ -132,13 +135,15 @@ export default function General({ app, settings, set }: PaneProps) {
           >
             <Popup value={settings.interval} options={INTERVALS} onChange={(v) => set("interval", v)} label="Check usage every" />
           </Row>
-          <Row
-            tile={["red", <Mic />]}
-            title="Talk to a chat"
-            detail="From anywhere: the shortcut drops a panel from the menu bar that listens, and sends what you say to the chat you last followed."
-          >
-            <ShortcutField keys={settings.talkShortcut} onChange={(keys) => set("talkShortcut", keys)} />
-          </Row>
+          {!WINDOWS && (
+            <Row
+              tile={["red", <Mic />]}
+              title="Talk to a chat"
+              detail={`From anywhere: the shortcut brings up a panel from the ${BAR} that listens, and sends what you say to the chat you last followed.`}
+            >
+              <ShortcutField keys={settings.talkShortcut} onChange={(keys) => set("talkShortcut", keys)} />
+            </Row>
+          )}
         </div>
       </Section>
 
@@ -218,7 +223,13 @@ function SignIn({ app }: { app: PaneProps["app"] }) {
           detail={
             <>
               <span className={app.ok ? "dot green" : "dot red"} />
-              {app.ok ? (hasToken ? "Saved in your keychain." : "Borrowed from Claude Code.") : app.status}
+              {app.ok
+                ? hasToken
+                  ? WINDOWS
+                    ? "Saved in Windows Credential Manager."
+                    : "Saved in your keychain."
+                  : "Borrowed from Claude Code."
+                : app.status}
             </>
           }
         >

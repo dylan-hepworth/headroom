@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { bridge } from "./bridge";
+import { WINDOWS } from "./platform";
 import "./popover.css";
 
 /** What's being heard while the mic's on: how loud it's been lately (0 to 1, the newest last), and the words heard so
@@ -29,6 +30,8 @@ export function Waveform({ levels }: { levels: number[] }) {
 /** The mic. A click turns it on, until a pause or another click; holding it down talks until it's let go. */
 export function MicButton({ listening, onStart, onStop }: { listening: boolean; onStart: () => void; onStop: () => void }) {
   const press = useRef({ at: 0, wasOn: false });
+  // Talking isn't there on Windows yet (see speech_win.rs)
+  if (WINDOWS) return null;
   return (
     <button
       type="button"
@@ -151,10 +154,13 @@ export function SpokenField({
   );
 }
 
-/** A shortcut as the app reads it ("Control+Alt+Space") the way macOS shows one: ⌃⌥Space. */
+/** A shortcut as the app reads it ("Control+Alt+Space") the way the system shows one: ⌃⌥Space on a Mac, Ctrl+Alt+Space
+ *  on Windows. */
 export function shortcutLabel(keys: string | null | undefined) {
   if (!keys) return "";
-  const marks: Record<string, string> = { control: "⌃", ctrl: "⌃", alt: "⌥", option: "⌥", shift: "⇧", command: "⌘", cmd: "⌘", super: "⌘" };
+  const marks: Record<string, string> = WINDOWS
+    ? { control: "Ctrl", ctrl: "Ctrl", alt: "Alt", option: "Alt", shift: "Shift", command: "Win", cmd: "Win", super: "Win" }
+    : { control: "⌃", ctrl: "⌃", alt: "⌥", option: "⌥", shift: "⇧", command: "⌘", cmd: "⌘", super: "⌘" };
   const arrows: Record<string, string> = { arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", up: "↑", down: "↓", left: "←", right: "→" };
   return keys
     .split("+")
@@ -164,7 +170,7 @@ export function shortcutLabel(keys: string | null | undefined) {
       if (arrows[p]) return arrows[p];
       return part.replace(/^Key/, "").replace(/^Digit/, "");
     })
-    .join("");
+    .join(WINDOWS ? "+" : "");
 }
 
 /** A shortcut as the app reads it, from a key pressed with at least one of ⌃, ⌥, or ⌘ (⇧ alone would type), or none

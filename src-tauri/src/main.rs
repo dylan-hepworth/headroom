@@ -1,3 +1,7 @@
+// No console window for the app, or for each hook Claude Code runs it as. A hook still has its input and output: Claude
+// Code hands them over as pipes.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -13,10 +17,11 @@ use tauri::{
     menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIcon, TrayIconBuilder},
     utils::config::WindowEffectsConfig,
-    window::{Effect, EffectState},
-    ActivationPolicy, AppHandle, Emitter, Manager, RunEvent, TitleBarStyle, WebviewUrl, WebviewWindowBuilder, WindowEvent,
-    Wry,
+    window::Effect,
+    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
 };
+#[cfg(target_os = "macos")]
+use tauri::{window::EffectState, ActivationPolicy, TitleBarStyle};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -27,12 +32,26 @@ mod desktop;
 mod hooks;
 mod icons;
 mod made;
+#[cfg(target_os = "macos")]
+mod notifications;
+#[cfg(windows)]
+#[path = "notifications_win.rs"]
 mod notifications;
 mod plans;
+mod platform;
 mod sessions;
+mod square_icon;
+#[cfg(target_os = "macos")]
+mod speech;
+#[cfg(windows)]
+#[path = "speech_win.rs"]
 mod speech;
 mod team;
 mod transcripts;
+#[cfg(target_os = "macos")]
+mod wallpaper;
+#[cfg(windows)]
+#[path = "wallpaper_win.rs"]
 mod wallpaper;
 
 /**************************
@@ -510,21 +529,34 @@ struct LoginError {
     try_again: bool,
 }
 
-/// The access token from the login Claude Code keeps in the keychain, if it hasn't expired.
-fn claude_code_login() -> Result<String, LoginError> {
-    let fail = |message| LoginError { message, try_again: true };
-    // Claude Code saves its login as JSON under "Claude Code-credentials". The first time we read it, macOS asks the
-    // user to allow access.
+/// The login Claude Code keeps, as the JSON it saves. On a Mac it's in the keychain, under "Claude Code-credentials",
+/// and the first time we read it, macOS asks the user to allow access.
+#[cfg(target_os = "macos")]
+fn claude_code_credentials() -> Result<Vec<u8>, LoginError> {
     let out = Command::new("/usr/bin/security")
         .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
         .output()
-        .map_err(|_| fail("Can't read the keychain"))?;
+        .map_err(|_| LoginError { message: "Can't read the keychain", try_again: true })?;
     if !out.status.success() {
         // 44 is "not found". Anything else is most likely the user saying no to the keychain prompt.
         let missing = out.status.code() == Some(44);
         return Err(LoginError { message: "No Claude Code login found", try_again: missing });
     }
-    let v: Value = serde_json::from_slice(&out.stdout).map_err(|_| fail("Unreadable credentials"))?;
+    Ok(out.stdout)
+}
+
+/// On Windows, Claude Code keeps its login in a file in its folder, ~/.claude/.credentials.json.
+#[cfg(windows)]
+fn claude_code_credentials() -> Result<Vec<u8>, LoginError> {
+    let path = platform::claude_dir().map(|d| d.join(".credentials.json"));
+    path.and_then(|p| std::fs::read(p).ok())
+        .ok_or(LoginError { message: "No Claude Code login found", try_again: true })
+}
+
+/// The access token from the login Claude Code keeps, if it hasn't expired.
+fn claude_code_login() -> Result<String, LoginError> {
+    let fail = |message| LoginError { message, try_again: true };
+    let v: Value = serde_json::from_slice(&claude_code_credentials()?).map_err(|_| fail("Unreadable credentials"))?;
     let oauth = &v["claudeAiOauth"];
 
     // Claude Code refreshes this login on its own while it's in use, but we don't. Refreshing it from here would swap
@@ -892,6 +924,79 @@ fn tray_rings(state: &State, usage: Option<&Usage>) -> Option<Image<'static>> {
     }
 }
 
+/// Draw the tray icon on Windows, which has no room for a title beside it (see square_icon.rs): the rings one inside
+/// another, the number in the middle when the title would show one limit, a dot for sessions waiting, and
+/// everything in words in the tooltip. With `flag`, the last check failed and there's no usage to show.
+#[cfg(windows)]
+fn draw_tray(state: &State, usage: Option<&Usage>, flag: Option<&str>) {
+    use square_icon::{Icon, Ring};
+    let pct = |i: usize| usage.and_then(|u| u[i].as_ref()).map_or(0.0, |w| w.pct);
+    let highest = usage.map_or(0.0, |u| u.iter().flatten().map(|w| w.pct).fold(0.0, f64::max));
+    let red = |pct: f64, color| if pct >= CRITICAL_AT { RING_CRITICAL } else { color };
+    let five = Ring { pct: pct(0), color: red(pct(0), RING_FIVE_HOUR) };
+    let week = Ring { pct: pct(1), color: red(pct(1), RING_FILL) };
+    let mode = *state.title_mode.lock().unwrap();
+    let number = |i: usize| usage.and_then(|u| u[i].as_ref()).map(|w| format!("{}", w.pct.min(100.0) as u32));
+    let (rings, text) = match mode {
+        "5h" | "5h_reset" => (vec![five], number(0)),
+        "7d" => (vec![Ring { pct: pct(1), color: red(highest, RING_FILL) }], number(1)),
+        "ring" => (vec![Ring { pct: pct(1), color: red(highest, RING_FILL) }], None),
+        "rings_model" => {
+            let model = state.model_limits.lock().unwrap().first().cloned();
+            let mut rings = vec![week, five];
+            rings.extend(model.map(|m| Ring {
+                pct: usage.map_or(0.0, |_| m.window.pct),
+                color: red(m.window.pct, RING_MODEL),
+            }));
+            (rings, None)
+        }
+        _ => (vec![week, five], None),
+    };
+    let text = if flag.is_some() { Some("!".to_string()) } else { text };
+    let (answer, done) = waiting_counts(state);
+    // One dot fits in the corner: yellow when anything needs an answer, which matters more, or else blue
+    let dots: Vec<[u8; 4]> = [(answer, [242, 181, 28, 255]), (done, [59, 140, 245, 255])]
+        .into_iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(_, c)| c)
+        .take(1)
+        .collect();
+    let paused = is_paused(state);
+    let icon = Icon { rings: &rings, text, dots: &dots, faded: paused, light: platform::light_taskbar() };
+    let image = Image::new_owned(square_icon::draw(&icon), square_icon::SIZE, square_icon::SIZE);
+    let _ = state.tray.set_icon(Some(image));
+
+    // The tooltip says it all in words, as the Mac's title would
+    let mut tip = vec!["Headroom".to_string()];
+    match (flag, usage) {
+        (Some(flag), _) => {
+            let status = state.status.text().unwrap_or_default();
+            tip.push(if status.is_empty() { flag.to_string() } else { status });
+        }
+        (None, Some(usage)) => {
+            for (info, w) in LIMITS.iter().zip(usage.iter()).take(2).filter(|(_, w)| w.is_some()) {
+                tip.push(format!("{} {}{}", info.label, fmt_pct(w), pace_mark(state, info.key, w)));
+            }
+            if mode == "5h_reset" {
+                tip.push(format!("5-hour resets in {}", fmt_time_left(&usage[0])));
+            }
+        }
+        _ => {}
+    }
+    if answer > 0 {
+        tip.push(format!("{answer} waiting on you"));
+    }
+    if done > 0 {
+        tip.push(format!("{done} done"));
+    }
+    if paused {
+        tip.push("Paused".into());
+    }
+    // Windows cuts a tooltip off at 127 characters
+    let tip: String = tip.join(" · ").chars().take(127).collect();
+    let _ = state.tray.set_tooltip(Some(tip));
+}
+
 /// Read a saved setting. Each setting is its own small file in the config directory.
 fn load_setting(config_dir: &Path, key: &str) -> Option<String> {
     std::fs::read_to_string(config_dir.join(key)).ok().map(|s| s.trim().to_string())
@@ -1060,19 +1165,16 @@ fn open_session(state: &State, id: &str, host: Option<String>) {
     let chat = chat.or_else(|| state.desktop.lock().unwrap().chat_id(id));
     if let Some(chat) = chat {
         // The link the app's own Spotlight entries use
-        let link = format!("claude://code/continue?session={chat}&source=desktop_action");
-        let _ = Command::new("open").arg(link).spawn();
+        let _ = platform::open(&format!("claude://code/continue?session={chat}&source=desktop_action"));
     } else if let Some(host) = host {
-        let _ = Command::new("open").args(["-b", &host]).spawn();
+        platform::open_app(&host);
     }
 }
 
-/// Open Headroom's own page in System Settings → Notifications, where its alert style is chosen.
+/// Open Headroom's own page in the system's notification settings, where its alert style is chosen.
 #[tauri::command]
 fn open_notification_settings() {
-    let _ = Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.dylan-hepworth.headroom")
-        .spawn();
+    platform::notification_settings();
 }
 
 /*********************************
@@ -1287,6 +1389,9 @@ fn update_title(state: &State) {
         *state.paces.lock().unwrap() = paces;
         changed(state);
     }
+    #[cfg(windows)]
+    return draw_tray(state, Some(usage), None);
+    #[cfg_attr(windows, allow(unreachable_code))]
     let rings = tray_rings(state, Some(usage));
     let has_rings = rings.is_some();
     // The icon goes first, so the menu bar item is sized for the new title with the new icon, not the old one
@@ -1338,6 +1443,7 @@ fn set_title(state: &State, text: String) {
         return;
     }
 
+    #[cfg(target_os = "macos")]
     let _ = state.tray.with_inner_tray_icon(move |tray| {
         use objc2::{AnyThread, MainThreadMarker, runtime::AnyObject};
         use objc2_app_kit::{
@@ -1588,6 +1694,9 @@ fn redraw(state: &State) {
 
 /// Show `flag` ("…" while loading, "⚠" after a failed check) in the menu bar, next to empty rings or the "✻".
 fn show_flag(state: &State, flag: &str) {
+    #[cfg(windows)]
+    return draw_tray(state, None, Some(flag));
+    #[cfg_attr(windows, allow(unreachable_code))]
     let rings = tray_rings(state, None);
     let title = if rings.is_some() { flag.to_string() } else { format!("✻ {flag}") };
     let _ = state.tray.set_icon(rings);
@@ -1650,24 +1759,31 @@ fn open_settings_at(app: &AppHandle, pane: &str, setting: Option<&str>) {
         None => format!("index.html?pane={pane}"),
     };
     let url = WebviewUrl::App(url.into());
-    let Ok(w) = WebviewWindowBuilder::new(app, "settings", url)
+    let builder = WebviewWindowBuilder::new(app, "settings", url)
         .title("Headroom")
         .inner_size(860.0, 580.0)
         .min_inner_size(720.0, 480.0)
         .maximizable(false)
-        .title_bar_style(TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .transparent(true)
-        .effects(WindowEffectsConfig {
+        .center();
+    // On a Mac, the page draws under a see-through title bar, with the sidebar's frosted glass behind it. Windows keeps
+    // its own title bar, with Mica behind the page, the way its own Settings app looks.
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(TitleBarStyle::Overlay).hidden_title(true).transparent(true).effects(
+        WindowEffectsConfig {
             effects: vec![Effect::Sidebar],
             state: Some(EffectState::FollowsWindowActiveState),
             ..Default::default()
-        })
-        .center()
-        .build()
-    else {
+        },
+    );
+    #[cfg(windows)]
+    let builder = builder.transparent(true).effects(WindowEffectsConfig {
+        effects: vec![Effect::Mica],
+        ..Default::default()
+    });
+    let Ok(w) = builder.build() else {
         return;
     };
+    #[cfg(target_os = "macos")]
     round_corners(&w);
     in_dock_while_open(app, &w);
     let _ = w.set_focus();
@@ -1678,18 +1794,25 @@ static DOCK_WINDOWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 
 /// Headroom lives in the menu bar, but while one of its windows is open, it's in the Dock and the app switcher too,
 /// with the usual menus, like any app. It goes back to the menu bar alone once the last of them is closed.
+///
+/// On Windows, a window is on the taskbar while it's open anyway, and there's no app menu to add.
 fn in_dock_while_open(app: &AppHandle, w: &tauri::WebviewWindow) {
     use std::sync::atomic::Ordering::SeqCst;
     DOCK_WINDOWS.fetch_add(1, SeqCst);
-    let _ = app.set_activation_policy(ActivationPolicy::Regular);
-    if let Ok(menu) = Menu::default(app) {
-        let _ = app.set_menu(menu);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(ActivationPolicy::Regular);
+        if let Ok(menu) = Menu::default(app) {
+            let _ = app.set_menu(menu);
+        }
     }
     let handle = app.clone();
     w.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
             if DOCK_WINDOWS.fetch_sub(1, SeqCst) == 1 {
+                #[cfg(target_os = "macos")]
                 let _ = handle.set_activation_policy(ActivationPolicy::Accessory);
+                let _ = &handle;
             }
         }
     });
@@ -1747,7 +1870,7 @@ fn last_chat(state: tauri::State<Arc<State>>) -> Option<String> {
 /// that's one of Headroom's own windows, like the planner.
 #[tauri::command]
 fn headroom_in_front() -> bool {
-    frontmost_app().as_deref() == Some("io.github.dylan-hepworth.headroom")
+    platform::headroom_in_front()
 }
 
 /// Open the agent planner (see Planner.tsx), or bring it forward.
@@ -1768,17 +1891,18 @@ fn open_planner(app: &AppHandle, follow: Option<&str>) {
         Some(plan) => format!("index.html?planner&follow={plan}"),
         None => "index.html?planner".into(),
     };
-    let Ok(w) = WebviewWindowBuilder::new(app, "planner", WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(app, "planner", WebviewUrl::App(url.into()))
         .title("Plan Agents")
         .inner_size(1280.0, 760.0)
         .min_inner_size(900.0, 560.0)
+        .center();
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .title_bar_style(TitleBarStyle::Overlay)
         .hidden_title(true)
         // Centered down the planner's toolbar, which is taller than a title bar (see plan.css)
-        .traffic_light_position(tauri::LogicalPosition::new(18.0, 27.0))
-        .center()
-        .build()
-    else {
+        .traffic_light_position(tauri::LogicalPosition::new(18.0, 27.0));
+    let Ok(w) = builder.build() else {
         return;
     };
     in_dock_while_open(app, &w);
@@ -1801,8 +1925,9 @@ static LOOKING: Mutex<Option<std::process::Child>> = Mutex::new(None);
 #[tauri::command]
 fn look_at(item: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
     made_ok(&state, &item)?;
-    if made::kind(&item) == made::Kind::Link {
-        Command::new("open").arg(&item).spawn().map_err(|e| e.to_string())?;
+    // Windows has no Quick Look, so a file opens in the app it belongs to, as a link does
+    if made::kind(&item) == made::Kind::Link || cfg!(windows) {
+        platform::open(&item).map_err(|e| e.to_string())?;
         return Ok(());
     }
     let mut looking = LOOKING.lock().unwrap();
@@ -1830,7 +1955,7 @@ fn looking() -> bool {
 #[tauri::command]
 fn show_made(item: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
     made_ok(&state, &item)?;
-    Command::new("open").args(["-R", &item]).spawn().map_err(|e| e.to_string())?;
+    platform::reveal(&item).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1842,6 +1967,13 @@ fn made_picture(item: String, state: tauri::State<Arc<State>>) -> Result<String,
     if made::kind(&item) != made::Kind::Image || item.to_lowercase().ends_with(".svg") {
         return Err("That isn't a picture Headroom can show".into());
     }
+    let bytes = thumbnail(&item).ok_or("That picture couldn't be read")?;
+    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+/// A picture made small, at most 360 pixels on its longer side, as a PNG.
+#[cfg(target_os = "macos")]
+fn thumbnail(item: &str) -> Option<Vec<u8>> {
     let small = std::env::temp_dir().join(format!("headroom-thumb-{}.png", std::process::id()));
     let made = Command::new("sips")
         .args(["-s", "format", "png", "-Z", "360", &item, "--out"])
@@ -1849,13 +1981,18 @@ fn made_picture(item: String, state: tauri::State<Arc<State>>) -> Result<String,
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| e.to_string())?;
-    let bytes = if made.success() { std::fs::read(&small).map_err(|e| e.to_string())? } else { vec![] };
+        .ok()?;
+    let bytes = if made.success() { std::fs::read(&small).ok()? } else { vec![] };
     let _ = std::fs::remove_file(&small);
-    if bytes.is_empty() {
-        return Err("That picture couldn't be read".into());
-    }
-    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    (!bytes.is_empty()).then_some(bytes)
+}
+
+#[cfg(windows)]
+fn thumbnail(item: &str) -> Option<Vec<u8>> {
+    let small = image::open(item).ok()?.thumbnail(360, 360);
+    let mut out = std::io::Cursor::new(vec![]);
+    small.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
 }
 
 /// A document Claude made, to read in the panel: Markdown or plain text, and not a huge one.
@@ -1875,6 +2012,7 @@ fn read_made(item: String, state: tauri::State<Arc<State>>) -> Result<String, St
 /// Save a team from the planner to a file the user picks, for another Mac or another person to import. Returns
 /// whether it was saved, rather than the user cancelling. On the main thread, as a command that isn't async is.
 #[tauri::command]
+#[cfg(target_os = "macos")]
 fn export_plan(name: String, text: String) -> Result<bool, String> {
     use objc2_app_kit::NSSavePanel;
     use objc2_foundation::NSString;
@@ -1891,6 +2029,19 @@ fn export_plan(name: String, text: String) -> Result<bool, String> {
     }
     let path = panel.URL().and_then(|url| url.path()).ok_or("Headroom couldn't tell where that is")?;
     std::fs::write(path.to_string(), text).map_err(|e| format!("Couldn't save it there: {e}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+#[cfg(windows)]
+fn export_plan(name: String, text: String) -> Result<bool, String> {
+    serde_json::from_str::<Value>(&text).map_err(|_| "That team couldn't be written out")?;
+    // A file's name can't have any of these in it
+    let file = format!("{}.json", name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-"));
+    let Some(path) = rfd::FileDialog::new().set_file_name(file).add_filter("Team", &["json"]).save_file() else {
+        return Ok(false);
+    };
+    std::fs::write(path, text).map_err(|e| format!("Couldn't save it there: {e}"))?;
     Ok(true)
 }
 
@@ -2189,6 +2340,7 @@ const POPOVER_ROOM: f64 = 40.0;
 /// middle, but never past the right edge of the item's screen. Returns where the window's top left corner goes, in
 /// AppKit's screen coordinates (up from the bottom of the main screen), and how far the arrow's point is from the
 /// panel's right edge, in points. Asks the menu bar item's own window, which is right on any screen, at any scale.
+#[cfg(target_os = "macos")]
 fn popover_place(state: &State) -> Option<(f64, f64, f64)> {
     state
         .tray
@@ -2206,6 +2358,7 @@ fn popover_place(state: &State) -> Option<(f64, f64, f64)> {
 }
 
 /// Do something with a window's NSWindow. Only on the main thread.
+#[cfg(target_os = "macos")]
 fn with_ns_window(window: &tauri::WebviewWindow, f: impl FnOnce(&objc2_app_kit::NSWindow)) {
     if objc2::MainThreadMarker::new().is_none() {
         return;
@@ -2251,19 +2404,34 @@ fn show_popover(app: &AppHandle, focus: bool) {
         let Some(window) = popover_window(&handle) else { return };
         POPOVER_SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // The panel draws its own shadow. And it's opaque again, if it was shown again while fading out.
-        with_ns_window(&window, |w| {
-            w.setHasShadow(false);
-            w.setAlphaValue(1.0);
-        });
-        if let Some((left, top, arrow)) = popover_place(&handle.state::<Arc<State>>()) {
-            with_ns_window(&window, |w| w.setFrameTopLeftPoint(objc2_foundation::NSPoint::new(left, top)));
-            let _ = window.emit("popover-arrow", arrow);
+        #[cfg(target_os = "macos")]
+        {
+            with_ns_window(&window, |w| {
+                w.setHasShadow(false);
+                w.setAlphaValue(1.0);
+            });
+            if let Some((left, top, arrow)) = popover_place(&handle.state::<Arc<State>>()) {
+                with_ns_window(&window, |w| w.setFrameTopLeftPoint(objc2_foundation::NSPoint::new(left, top)));
+                let _ = window.emit("popover-arrow", arrow);
+            }
+        }
+        #[cfg(windows)]
+        {
+            let state = handle.state::<Arc<State>>();
+            *POPOVER_ANCHOR.lock().unwrap() = popover_anchor(&state);
+            place_popover(&window, None);
+            // No arrow: a panel from the taskbar stands on its own, like Windows' own
+            let _ = window.emit("popover-arrow", -1.0);
         }
         if focus {
             let _ = window.show();
             let _ = window.set_focus();
         } else {
+            #[cfg(target_os = "macos")]
             with_ns_window(&window, |w| w.orderFrontRegardless());
+            // Made unfocused, so it comes up without taking the keyboard
+            #[cfg(windows)]
+            let _ = window.show();
         }
         // The list of chats, or the requests (see `tray_clicked`)
         let state = handle.state::<Arc<State>>();
@@ -2307,17 +2475,26 @@ fn hide_popover(app: &AppHandle) {
                     let Some(window) = app.get_webview_window("popover") else { return };
                     if step < STEPS {
                         // Easing in: slow to start, then quicker
-                        let t = step as f64 / STEPS as f64;
-                        with_ns_window(&window, |w| w.setAlphaValue(1.0 - t * t));
+                        #[cfg(target_os = "macos")]
+                        {
+                            let t = step as f64 / STEPS as f64;
+                            with_ns_window(&window, |w| w.setAlphaValue(1.0 - t * t));
+                        }
                         return;
                     }
                     let had_keyboard = window.is_focused().unwrap_or(false);
                     let _ = window.hide();
-                    with_ns_window(&window, |w| w.setAlphaValue(1.0));
-                    // Unless one of Headroom's windows is open, which the user may be going back to
-                    if had_keyboard && DOCK_WINDOWS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-                        let _ = app.hide();
+                    #[cfg(target_os = "macos")]
+                    {
+                        with_ns_window(&window, |w| w.setAlphaValue(1.0));
+                        // Unless one of Headroom's windows is open, which the user may be going back to
+                        if had_keyboard && DOCK_WINDOWS.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                            let _ = app.hide();
+                        }
                     }
+                    // Windows gives the keyboard back to the window that had it on its own
+                    #[cfg(windows)]
+                    let _ = had_keyboard;
                 });
             }
         });
@@ -2327,7 +2504,13 @@ fn hide_popover(app: &AppHandle) {
 /// The popover's page asks where its arrow should point when it loads, since it may have missed the event.
 #[tauri::command]
 fn popover_arrow(state: tauri::State<Arc<State>>) -> f64 {
-    popover_place(&state).map_or(60.0, |(_, _, arrow)| arrow)
+    #[cfg(target_os = "macos")]
+    return popover_place(&state).map_or(60.0, |(_, _, arrow)| arrow);
+    #[cfg(windows)]
+    {
+        let _ = state;
+        -1.0
+    }
 }
 
 /// The popover's page reports how tall it needs to be, and the window follows, keeping its top edge where it is so the
@@ -2336,6 +2519,7 @@ fn popover_arrow(state: tauri::State<Arc<State>>) -> f64 {
 fn popover_resize(height: f64, app: AppHandle) {
     let Some(window) = app.get_webview_window("popover") else { return };
     let height = height.clamp(80.0, 900.0);
+    #[cfg(target_os = "macos")]
     with_ns_window(&window, |w| {
         let mut frame = w.frame();
         let top = frame.origin.y + frame.size.height;
@@ -2343,6 +2527,58 @@ fn popover_resize(height: f64, app: AppHandle) {
         frame.origin.y = top - height;
         w.setFrame_display(frame, true);
     });
+    // Over the taskbar, it grows up from its bottom edge instead
+    #[cfg(windows)]
+    place_popover(&window, Some(height));
+}
+
+/// Where the popover stands on Windows, in logical pixels: the x of the window's left edge, the y of the edge it keeps
+/// still as it grows, and whether that's its bottom edge (a taskbar along the bottom) or its top (one along the top).
+#[cfg(windows)]
+static POPOVER_ANCHOR: Mutex<Option<(f64, f64, bool)>> = Mutex::new(None);
+
+/// Work out where the popover goes: its panel's right edge a little past the tray icon's middle, but inside the screen,
+/// and against the taskbar, wherever the taskbar is. The icon may be tucked away in the overflow, which has no place to
+/// ask about, so then it's where the pointer is, which is where the click was.
+#[cfg(windows)]
+fn popover_anchor(state: &State) -> Option<(f64, f64, bool)> {
+    let app = &state.app;
+    let (x, y, w, h) = match state.tray.rect().ok().flatten() {
+        Some(r) => {
+            let (p, s) = (r.position.to_physical::<f64>(1.0), r.size.to_physical::<f64>(1.0));
+            (p.x, p.y, s.width, s.height)
+        }
+        None => {
+            let at = app.cursor_position().ok()?;
+            (at.x, at.y, 0.0, 0.0)
+        }
+    };
+    let monitor = app.monitor_from_point(x + w / 2.0, y + h / 2.0).ok().flatten().or(app.primary_monitor().ok()?)?;
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let (left, top) = (area.position.x as f64 / scale, area.position.y as f64 / scale);
+    let (right, bottom) = (left + area.size.width as f64 / scale, top + area.size.height as f64 / scale);
+    let middle = (x + w / 2.0) / scale;
+    // The panel's right edge, kept 12 points in from the screen's edge
+    let panel_right = (middle + 60.0).min(right - 12.0);
+    let window_left = (panel_right + POPOVER_ROOM - (POPOVER_WIDTH + 2.0 * POPOVER_ROOM)).max(left - POPOVER_ROOM + 12.0);
+    // Against the taskbar: the page leaves 12 points below the panel (see popover.css), and the window mustn't reach
+    // over the taskbar, where it would catch clicks meant for it. A taskbar along the top leaves the work area starting
+    // below the icon.
+    let at_top = y / scale < top;
+    Some(if at_top { (window_left, top, false) } else { (window_left, bottom, true) })
+}
+
+/// Put the popover where `popover_anchor` said, at `height` if it's changing size.
+#[cfg(windows)]
+fn place_popover(window: &tauri::WebviewWindow, height: Option<f64>) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let height = height.unwrap_or_else(|| window.outer_size().map_or(300.0, |s| s.height as f64 / scale));
+    if let Some((left, edge, bottom)) = *POPOVER_ANCHOR.lock().unwrap() {
+        let top = if bottom { edge - height } else { edge };
+        let _ = window.set_position(tauri::LogicalPosition::new(left, top));
+    }
+    let _ = window.set_size(tauri::LogicalSize::new(POPOVER_WIDTH + 2.0 * POPOVER_ROOM, height));
 }
 
 /// The ✕ in the popover, or the list put away by clicking somewhere else. The requests keep waiting, and the menu bar
@@ -2376,7 +2612,20 @@ fn show_popover_now(app: AppHandle) {
 #[tauri::command]
 fn popover_pointer(app: AppHandle) -> Option<(f64, f64)> {
     let window = app.get_webview_window("popover")?;
+    #[cfg(windows)]
+    {
+        if !window.is_visible().unwrap_or(false) {
+            return None;
+        }
+        let scale = window.scale_factor().ok()?;
+        let (at, from, size) = (app.cursor_position().ok()?, window.outer_position().ok()?, window.outer_size().ok()?);
+        let (x, y) = ((at.x - from.x as f64) / scale, (at.y - from.y as f64) / scale);
+        let (w, h) = (size.width as f64 / scale, size.height as f64 / scale);
+        return ((0.0..w).contains(&x) && (0.0..h).contains(&y)).then_some((x, y));
+    }
+    #[cfg(target_os = "macos")]
     let mut inside = None;
+    #[cfg(target_os = "macos")]
     with_ns_window(&window, |w| {
         if !w.isVisible() {
             return;
@@ -2388,6 +2637,7 @@ fn popover_pointer(app: AppHandle) -> Option<(f64, f64)> {
             inside = Some((x, y));
         }
     });
+    #[cfg(target_os = "macos")]
     inside
 }
 
@@ -2402,6 +2652,7 @@ fn get_asks(state: tauri::State<Arc<State>>) -> Vec<Value> {
 /// AppKit picks the radius from whether the window has a toolbar, so we attach an empty one. The title bar is
 /// transparent, so the toolbar draws nothing and the page shows through it. The toolbar is created with an identifier
 /// on purpose: creating one without an identifier crashes on older macOS versions.
+#[cfg(target_os = "macos")]
 fn round_corners(window: &tauri::WebviewWindow) {
     use objc2::{MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{NSToolbar, NSWindow, NSWindowToolbarStyle};
@@ -2437,7 +2688,7 @@ fn menu_clicked(state: Arc<State>, id: &str) {
         "quit" => state.app.exit(0),
         "refresh" => state.wake.notify_one(),
         "usage" => {
-            let _ = Command::new("open").arg(USAGE_PAGE).spawn();
+            let _ = platform::open(USAGE_PAGE);
         }
         "settings" => open_settings(&state.app, "general"),
         "planner" => open_planner(&state.app, None),
@@ -2883,11 +3134,45 @@ fn messages_go_in(state: &State) -> bool {
 /// the near-limit note, approvals, and hands-free.
 fn install_hooks(state: &State) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let exe = hook_copy(&exe).unwrap_or(exe);
     let note = state.near_limit.lock().unwrap().for_hooks();
     let (approvals, hold) = *state.approvals.lock().unwrap();
     // Hands-free, the hook after each tool call is waited for, so a message sent from the list can go in with it
     let hands_free = *state.hands_free.lock().unwrap();
     hooks::install(&exe, &note, approvals.then_some(hold), hands_free)
+}
+
+/// The copy of Headroom the hooks run on Windows. Windows won't replace a program that's running, and a hook holding a
+/// request runs for minutes, so hooks running Headroom.exe itself could stop an update from installing. They run a copy
+/// in Headroom's folder instead, one per version. Copies from older versions go once nothing's running them.
+#[cfg(windows)]
+fn hook_copy(exe: &Path) -> Option<PathBuf> {
+    let dir = platform::app_dir()?.join("hook");
+    std::fs::create_dir_all(&dir).ok()?;
+    let name = format!("headroom-hook-{}.exe", env!("CARGO_PKG_VERSION"));
+    let copy = dir.join(&name);
+    // Rebuilt in place (a build run from its folder), the same version can change; a copy that's running stays
+    let stale = |copy: &Path| {
+        let (Ok(a), Ok(b)) = (std::fs::metadata(exe), std::fs::metadata(copy)) else { return true };
+        a.len() != b.len() || a.modified().ok() > b.modified().ok()
+    };
+    if stale(&copy) {
+        let temp = dir.join(format!("{name}.new"));
+        if std::fs::copy(exe, &temp).is_err() || std::fs::rename(&temp, &copy).is_err() {
+            let _ = std::fs::remove_file(&temp);
+            if !copy.exists() {
+                return None;
+            }
+        }
+    }
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        if entry.file_name().to_string_lossy() != name {
+            // Fails while a hook is still running it, which is fine: it goes next time
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Some(copy)
 }
 
 /// Add or remove our Claude Code hooks. Sessions that were already running when they're added don't pick them up until
@@ -3045,8 +3330,7 @@ fn notify_session(state: &State, change: sessions::Change) {
     }
 }
 
-/// The Claude app's bundle ID.
-const CLAUDE_APP: &str = "com.anthropic.claudefordesktop";
+const CLAUDE_APP: &str = platform::CLAUDE_APP;
 
 /// Is the user looking at this session? Its app is the one in front, and if that's the Claude app, its chat is the one
 /// open there. A terminal can only be told apart by the app, not the tab.
@@ -3064,10 +3348,9 @@ fn looking_at(state: &State, session: &str, app: &Option<String>) -> bool {
     }
 }
 
-/// The bundle ID of the app in front, like "com.mitchellh.ghostty".
+/// The app in front: its bundle ID, like "com.mitchellh.ghostty", or on Windows its program.
 fn frontmost_app() -> Option<String> {
-    let app = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication()?;
-    Some(app.bundleIdentifier()?.to_string())
+    platform::frontmost_app()
 }
 
 /// After a good check, see whether the 5-hour or weekly limit just reset, and if any sessions had stopped at a limit,
@@ -3341,7 +3624,7 @@ fn save_attachment(data: String) -> Result<String, String> {
     }
     let dir = hooks::log_path().ok_or("Can't find Headroom's folder")?.with_file_name("attachments");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    platform::private_dir(&dir);
     static SAVED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = SAVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = dir.join(format!("{}-{n}.{ext}", Local::now().format("%Y-%m-%d-%H%M%S")));
@@ -3493,31 +3776,16 @@ fn pending(state: &State) -> Vec<Value> {
     rows
 }
 
-/// Every process: its ID, its parent's, its process group, and its command line.
+/// Every process: its ID, its parent's, its process group, and its command line (on Windows, its program's name).
 fn processes() -> Vec<(i32, i32, i32, String)> {
-    let Ok(out) = Command::new("/bin/ps").args(["-A", "-o", "pid=,ppid=,pgid=,command="]).output() else {
-        return vec![];
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| {
-            // Three numbers, padded to line up, then the command line with its own spaces
-            let mut rest = line.trim_start();
-            let mut number = || {
-                let (n, after) = rest.split_once(char::is_whitespace)?;
-                rest = after.trim_start();
-                n.parse::<i32>().ok()
-            };
-            let (pid, ppid, pgid) = (number()?, number()?, number()?);
-            Some((pid, ppid, pgid, rest.to_string()))
-        })
-        .collect()
+    platform::processes().into_iter().map(|p| (p.pid, p.ppid, p.group, p.command)).collect()
 }
 
 /// The process groups of the commands a session's Claude Code is running for Claude, found from the process that ran
 /// its hooks. Claude Code runs each command in a shell of its own, in a process group of its own, which starts by
 /// loading a snapshot of the user's shell setup; that's how they're told apart from its other children, like MCP
 /// servers.
+#[cfg(not(windows))]
 fn running_commands(processes: &[(i32, i32, i32, String)], hook_parent: i32) -> Vec<i32> {
     let shell = |command: &str| {
         let name = command.split_whitespace().next().unwrap_or_default();
@@ -3539,15 +3807,33 @@ fn running_commands(processes: &[(i32, i32, i32, String)], hook_parent: i32) -> 
         .collect()
 }
 
+/// The same on Windows, where Claude Code runs each command in a shell of its own too (Git Bash, usually), loading the
+/// same kind of snapshot. Windows has no process groups, so each command is the shell Claude Code started, and only
+/// the command lines of Claude Code's shells are read, since reading one takes a moment.
+#[cfg(windows)]
+fn running_commands(processes: &[(i32, i32, i32, String)], hook_parent: i32) -> Vec<i32> {
+    let shell = |name: &str| {
+        let name = name.rsplit(['\\', '/']).next().unwrap_or(name).to_ascii_lowercase();
+        matches!(name.as_str(), "bash.exe" | "sh.exe" | "cmd.exe" | "powershell.exe" | "pwsh.exe")
+    };
+    let snapshot = |pid: i32| platform::command_line(pid as u32).is_some_and(|c| c.contains("shell-snapshots"));
+    // A shell in between the hook and Claude Code goes when the hook does; it's Claude Code's commands we're after
+    let claude = match processes.iter().find(|p| p.0 == hook_parent) {
+        Some((pid, ppid, _, name)) if shell(name) && !snapshot(*pid) => *ppid,
+        Some(_) => hook_parent,
+        None => return vec![],
+    };
+    processes
+        .iter()
+        .filter(|(pid, ppid, _, name)| *ppid == claude && *pid != hook_parent && shell(name) && snapshot(*pid))
+        .map(|p| p.0)
+        .collect()
+}
+
 /// Send Now: stop the command a working session is running, the way Esc in Claude Code does, so the message the user
 /// sent it from the list goes in with the step's end right away, rather than whenever the command would have finished.
 #[tauri::command]
 fn stop_step(session: String, state: tauri::State<Arc<State>>) -> Result<(), String> {
-    unsafe extern "C" {
-        fn kill(pid: i32, sig: i32) -> i32;
-    }
-    const SIGTERM: i32 = 15;
-    const SIGKILL: i32 = 9;
     let parent = state.sessions.lock().unwrap().hook_parent(&session);
     let parent = parent.ok_or("Headroom can't tell which process that is")?;
     let groups = running_commands(&processes(), parent);
@@ -3555,16 +3841,15 @@ fn stop_step(session: String, state: tauri::State<Arc<State>>) -> Result<(), Str
         return Err("It isn't running a command right now, so it'll see your message after what it's doing".into());
     }
     for group in &groups {
-        // SAFETY: signals the command's own process group, which is never Claude Code's or Headroom's
-        unsafe { kill(-group, SIGTERM) };
+        // The command's own process group, which is never Claude Code's or Headroom's
+        platform::stop_group(*group, false);
     }
     // Anything that doesn't stop when asked is made to, a moment later
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(1500)).await;
         let left = processes();
         for group in groups.iter().filter(|g| left.iter().any(|p| p.2 == **g)) {
-            // SAFETY: as above
-            unsafe { kill(-group, SIGKILL) };
+            platform::stop_group(*group, true);
         }
     });
     Ok(())
@@ -3640,7 +3925,7 @@ fn refresh_now(state: tauri::State<Arc<State>>) {
 
 #[tauri::command]
 fn open_usage_page() {
-    let _ = Command::new("open").arg(USAGE_PAGE).spawn();
+    let _ = platform::open(USAGE_PAGE);
 }
 
 #[tauri::command]
@@ -3690,6 +3975,9 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
     let talk_shortcut = match load_setting(&config_dir, "talk_shortcut").as_deref() {
         Some("off") => None,
         Some(keys) if !keys.is_empty() => Some(keys.to_string()),
+        // Talking isn't there on Windows yet (see speech_win.rs), so neither is its shortcut. Ctrl+Alt is AltGr on
+        // many keyboards there, too, and would take AltGr+Space.
+        _ if cfg!(windows) => None,
         _ => Some(TALK_SHORTCUT.to_string()),
     };
 
@@ -3815,6 +4103,15 @@ fn build_state(app: &tauri::App) -> tauri::Result<State> {
         _ if show_ring || title_mode == "ring" => tray.icon(ring_icon(&[(0.0, RING_FILL, None)])).title("…"),
         _ => tray.title("✻ …"),
     };
+    // On Windows the icon is all there is (see `draw_tray`): empty rings until the first check
+    #[cfg(windows)]
+    {
+        use square_icon::{Icon, Ring};
+        let rings = [Ring { pct: 0.0, color: RING_FILL }];
+        let icon = Icon { rings: &rings, text: Some("…".into()), dots: &[], faded: false, light: platform::light_taskbar() };
+        let image = Image::new_owned(square_icon::draw(&icon), square_icon::SIZE, square_icon::SIZE);
+        tray = tray.icon(image).tooltip("Headroom");
+    }
     let tray = tray.build(app)?;
 
     Ok(State {
@@ -4042,6 +4339,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn finds_only_the_commands_claude_is_running() {
         let p = |pid, ppid, pgid, command: &str| (pid, ppid, pgid, command.to_string());
         let snapshot = "/bin/zsh -c source /Users/me/.claude/shell-snapshots/snapshot-zsh-1.sh && eval 'cargo build'";
@@ -4069,7 +4367,7 @@ mod tests {
         let me = std::process::id() as i32;
         let list = processes();
         let (_, ppid, _, command) = list.iter().find(|p| p.0 == me).expect("this test's own process");
-        assert_eq!(*ppid, std::os::unix::process::parent_id() as i32);
+        assert_eq!(*ppid, platform::parent_id());
         assert!(command.contains("headroom"), "{command}");
     }
 

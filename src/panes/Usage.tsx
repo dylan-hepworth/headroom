@@ -1,6 +1,7 @@
 import type { PaneProps } from "../App";
 import { Folder } from "../icons";
 import { Meter, Section } from "../ui";
+import { COMPUTER } from "../platform";
 
 export default function Usage({ app }: PaneProps) {
   const biggest = Math.max(1, ...app.shares.map((s) => s.pct));
@@ -40,7 +41,7 @@ export default function Usage({ app }: PaneProps) {
 
       <Section
         title="Claude Code This Window"
-        note="Each project's share of your Claude Code use on this Mac in the current 5-hour window. It's estimated from the token counts in Claude Code's transcripts, so it doesn't include claude.ai or other Macs."
+        note={`Each project's share of your Claude Code use on this ${COMPUTER} in the current 5-hour window. It's estimated from the token counts in Claude Code's transcripts, so it doesn't include claude.ai or other computers.`}
       >
         <div className="group">
           {app.shares.length === 0 && (

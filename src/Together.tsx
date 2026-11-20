@@ -11,6 +11,7 @@ import { Avatar, type ChatIcon } from "./Avatar";
 import { bridge } from "./bridge";
 import { deliver, useChats, type Plan } from "./Planner";
 import { SpokenField } from "./Voice";
+import { keys as shortcut } from "./platform";
 
 /** A plan shared with a chat. */
 export type Share = { plan: string; chat: string; title: string; icon?: ChatIcon };
@@ -159,7 +160,7 @@ export function TogetherPanel({
         ))}
       </ol>
       <div className="live-actions">
-        <button className="ask-btn ghost" disabled={!canUndo} onClick={onUndo} title="⌘Z">
+        <button className="ask-btn ghost" disabled={!canUndo} onClick={onUndo} title={shortcut("⌘Z")}>
           Undo
         </button>
       </div>

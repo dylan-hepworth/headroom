@@ -1,6 +1,7 @@
 import type { PaneProps } from "../App";
 import { BrandMark, Calendar } from "../icons";
 import { Popup, Row, Section, Switch } from "../ui";
+import { COMPUTER } from "../platform";
 
 const TIMES = [
   ["17:00", "5:00 PM"],
@@ -24,7 +25,7 @@ export default function Recap({ app, settings, set }: PaneProps) {
         </div>
       </Section>
 
-      <Section title="Today So Far" note="From Claude Code's transcripts on this Mac. Days without any Claude Code use are skipped.">
+      <Section title="Today So Far" note={`From Claude Code's transcripts on this ${COMPUTER}. Days without any Claude Code use are skipped.`}>
         {r ? (
           <div className="notification">
             <BrandMark size={34} />

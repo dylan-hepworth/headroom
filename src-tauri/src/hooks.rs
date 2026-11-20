@@ -18,7 +18,6 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
@@ -63,13 +62,9 @@ const EVENTS: [(&str, Option<&str>); 9] = [
 /// The most we keep of any one piece of text from an event, like a command or the start of Claude's reply.
 const MAX_TEXT: usize = 300;
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
 /// Where the hooks write and the app reads. It's the app's own settings folder, which the hook finds without Tauri.
 pub fn log_path() -> Option<PathBuf> {
-    Some(home()?.join("Library/Application Support/io.github.dylan-hepworth.headroom/sessions.log"))
+    Some(crate::platform::app_dir()?.join("sessions.log"))
 }
 
 /// Where the app leaves the latest usage for the prompt hook: see `write_limits`.
@@ -143,7 +138,7 @@ fn answers_dir() -> Option<PathBuf> {
 /// Where messages the user sends a working session from the list wait for it, one folder per session and one file per
 /// message (see `interject`).
 fn interject_dir(session: &str) -> Option<PathBuf> {
-    Some(log_path()?.with_file_name("interject").join(session.replace(['/', '.'], "")))
+    Some(log_path()?.with_file_name("interject").join(session.replace(['/', '\\', ':', '.'], "")))
 }
 
 /// The most extra time pausing can add to a request, in total. The hook's timeout in settings.json allows for it.
@@ -154,7 +149,7 @@ const MAX_PAUSE: std::time::Duration = std::time::Duration::from_secs(120);
 const APP_ALIVE_MS: i64 = 15_000;
 
 fn settings_path() -> Option<PathBuf> {
-    Some(home()?.join(".claude/settings.json"))
+    Some(crate::platform::claude_dir()?.join("settings.json"))
 }
 
 /*********************************
@@ -186,7 +181,7 @@ pub fn run() {
     if let Some(hold) = hold {
         let id = format!(
             "{}-{}-{}",
-            session.replace(['/', '.'], ""),
+            session.replace(['/', '\\', ':', '.'], ""),
             chrono::Utc::now().timestamp_millis(),
             std::process::id()
         );
@@ -316,7 +311,7 @@ fn team() -> Option<String> {
 }
 
 fn asking_file(session: &str) -> Option<PathBuf> {
-    Some(asking_dir()?.join(session.replace(['/', '.'], "")))
+    Some(asking_dir()?.join(session.replace(['/', '\\', ':', '.'], "")))
 }
 
 /// The user said something, so a session that was sent back to ask what's next can be again.
@@ -388,7 +383,7 @@ fn save_context(id: &str, event: &Value) -> Option<()> {
         "recent": recent(&lines, 10),
         "named": crate::made::named(&said, cwd),
     });
-    let mut file = OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(path).ok()?;
+    let mut file = crate::platform::private(OpenOptions::new().create(true).write(true).truncate(true)).open(path).ok()?;
     file.write_all(text.to_string().as_bytes()).ok()
 }
 
@@ -619,7 +614,7 @@ fn holds_for_reply(event: &Value) -> bool {
     // Only where going to the session can end the wait: when the hook can tell which app it runs in (not over ssh,
     // say). A chat that's merely the one open in the Claude app is held too, like a question: only one the user's
     // looking at right now isn't (see `watching`), and the hold lets go if they go to it (see `looked_at`).
-    let findable = std::env::var("__CFBundleIdentifier").is_ok();
+    let findable = host_app().is_some();
     findable
         && hands_free()
         && waited_on()
@@ -773,7 +768,7 @@ fn read_turn_end(lines: &str) -> TurnEnd {
 pub fn log(event: &Value) {
     let Some(path) = log_path() else { return };
     let _ = fs::create_dir_all(path.parent().unwrap_or(&path));
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).mode(0o600).open(path) {
+    if let Ok(mut file) = crate::platform::private(OpenOptions::new().create(true).append(true)).open(path) {
         let _ = file.write_all(format!("{event}\n").as_bytes());
     }
 }
@@ -812,11 +807,7 @@ fn app_says_hold() -> bool {
 /// terminal counts when it's the app in front. The Claude app only counts when this session's chat is the one open
 /// there: a request from another chat is one they haven't seen.
 fn watching() -> bool {
-    let front = objc2_app_kit::NSWorkspace::sharedWorkspace()
-        .frontmostApplication()
-        .and_then(|a| a.bundleIdentifier())
-        .map(|id| id.to_string());
-    looking(front.as_deref(), from_app("open_chat").as_deref())
+    looking(crate::platform::frontmost_app().as_deref(), from_app("open_chat").as_deref())
 }
 
 /// The same, while holding a turn open: this process's view of the app in front doesn't change without a run loop, so
@@ -828,14 +819,20 @@ fn looked_at() -> bool {
 /// Is `front` the app this session runs in, and in the Claude app, is `open` (empty when none is) its chat? Not knowing
 /// which chat is open, it's taken to be this one.
 fn looking(front: Option<&str>, open: Option<&str>) -> bool {
-    let Ok(app) = std::env::var("__CFBundleIdentifier") else { return false };
-    front == Some(app.as_str()) && host_chat().is_none_or(|chat| open.is_none_or(|open| open == chat))
+    let Some(app) = host_app() else { return false };
+    front == Some(app) && host_chat().is_none_or(|chat| open.is_none_or(|open| open == chat))
 }
 
 /// Something the app says in approvals.json.
 fn from_app(key: &str) -> Option<String> {
     let config: Value = serde_json::from_str(&fs::read_to_string(approvals_path()?).ok()?).ok()?;
     config[key].as_str().map(String::from)
+}
+
+/// The app this session runs in (see `platform::host_app`), found once per run of the hook.
+fn host_app() -> Option<&'static str> {
+    static APP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    APP.get_or_init(crate::platform::host_app).as_deref()
 }
 
 /// The Claude app's own ID for the chat this session is ("local_…"), when it runs in the Claude app.
@@ -856,7 +853,7 @@ fn hold_for_answer(id: &str, at: i64, hold: std::time::Duration, event: &Value) 
     let more_path = dir.join(format!("{id}.more"));
     // The conversation kept for the popover (see `save_context`) goes with the question
     let _context = Remove(context_path(id));
-    let parent = std::os::unix::process::parent_id();
+    let parent = crate::platform::Parent::new();
     let give_up = || {
         let _ = fs::remove_file(&more_path);
         log(&json!({
@@ -910,7 +907,7 @@ fn hold_for_answer(id: &str, at: i64, hold: std::time::Duration, event: &Value) 
         let more = more.min(MAX_PAUSE.as_millis() as u64);
         let out_of_time = chrono::Utc::now().timestamp_millis() >= at + (hold.as_millis() + more as u128) as i64;
         // Claude Code gone (the session was interrupted or closed) leaves this hook with a new parent
-        let orphaned = std::os::unix::process::parent_id() != parent;
+        let orphaned = parent.gone();
         // approvals.json is only rechecked about once a second; it's rewritten every few
         let app_gone = polls % 7 == 0 && !app_says_hold();
         // A turn held for a reply lets go once the user's looking at the chat, to type in it, or hands-free goes off
@@ -1054,7 +1051,7 @@ fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
 /// The conversation kept with a held question in hands-free mode: what the user last said, and what Claude has said
 /// since. Read by the app when the request comes in.
 pub fn context(id: &str) -> Option<Value> {
-    serde_json::from_str(&fs::read_to_string(context_path(&id.replace(['/', '.'], ""))?).ok()?).ok()
+    serde_json::from_str(&fs::read_to_string(context_path(&id.replace(['/', '\\', ':', '.'], ""))?).ok()?).ok()
 }
 
 /// How much time the user has added to each held request by pausing it, in milliseconds, by request ID. The hooks
@@ -1077,8 +1074,8 @@ pub fn extra_time() -> std::collections::HashMap<String, i64> {
 pub fn answer(id: &str, choice: &str) -> Result<(), String> {
     let dir = answers_dir().ok_or("Can't find Headroom's folder")?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let _ = fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
-    let name = id.replace(['/', '.'], "");
+    crate::platform::private_dir(&dir);
+    let name = id.replace(['/', '\\', ':', '.'], "");
     let temp = dir.join(format!(".{name}.tmp"));
     fs::write(&temp, choice)
         .and_then(|_| fs::rename(&temp, dir.join(format!("{name}.json"))))
@@ -1089,7 +1086,7 @@ pub fn answer(id: &str, choice: &str) -> Result<(), String> {
 pub fn extend(id: &str, ms: u64) -> Result<(), String> {
     let dir = answers_dir().ok_or("Can't find Headroom's folder")?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    write_whole(&dir.join(format!("{}.more", id.replace(['/', '.'], ""))), &ms.to_string()).map_err(|e| e.to_string())
+    write_whole(&dir.join(format!("{}.more", id.replace(['/', '\\', ':', '.'], ""))), &ms.to_string()).map_err(|e| e.to_string())
 }
 
 /// Leave a message for a working session, from the list, for its hooks to hand Claude (see `take_interjections`). Each
@@ -1109,14 +1106,14 @@ fn queue(session: &str, text: &str, kind: &str) -> Result<(), String> {
     let dir = interject_dir(session).ok_or("Can't find Headroom's folder")?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for dir in [dir.parent(), Some(dir.as_path())].into_iter().flatten() {
-        let _ = fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        crate::platform::private_dir(dir);
     }
     static SENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // Named so they sort in the order they were sent
     let name = format!("{}-{n:06}", chrono::Utc::now().timestamp_millis());
     let temp = dir.join(format!(".{name}.tmp"));
-    let mut file = OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&temp);
+    let mut file = crate::platform::private(OpenOptions::new().create(true).write(true).truncate(true)).open(&temp);
     file.as_mut().map_err(|e| e.to_string())?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
     fs::rename(&temp, dir.join(format!("{name}.{kind}"))).map_err(|e| e.to_string())
 }
@@ -1196,7 +1193,7 @@ impl Waiting {
 fn first_time(key: &str, session: &str) -> bool {
     let Some(dir) = sent_dir() else { return false };
     let _ = fs::create_dir_all(&dir);
-    let name = format!("{:x}-{}", short_hash(key), session.replace(['/', '.'], ""));
+    let name = format!("{:x}-{}", short_hash(key), session.replace(['/', '\\', ':', '.'], ""));
     OpenOptions::new().write(true).create_new(true).open(dir.join(name)).is_ok()
 }
 
@@ -1367,10 +1364,9 @@ fn keep(event: &Value) -> Value {
         }
     }
 
-    // macOS tells a process which app started it. For a session, that's the terminal or the Claude app it runs in,
-    // which lets Headroom skip a notification when you're already looking at that app. In the Claude app, it's also
-    // told which chat, which Headroom can open straight to.
-    if let Ok(app) = std::env::var("__CFBundleIdentifier") {
+    // The terminal or the Claude app the session runs in, which lets Headroom skip a notification when you're already
+    // looking at that app. In the Claude app, it's also told which chat, which Headroom can open straight to.
+    if let Some(app) = host_app() {
         out.insert("app".into(), app.into());
     }
     if let Some(chat) = host_chat() {
@@ -1378,7 +1374,7 @@ fn keep(event: &Value) -> Value {
     }
     // The process that ran the hook: the session's Claude Code, or a shell it started for it. The app looks there for
     // the command Claude's running, to stop it when the user wants a message to go in right away.
-    out.insert("ppid".into(), std::os::unix::process::parent_id().into());
+    out.insert("ppid".into(), crate::platform::parent_id().into());
     // Nobody to send it anything from the list
     if !attended() {
         out.insert("unattended".into(), true.into());
@@ -1513,7 +1509,7 @@ fn clip(text: &str) -> String {
 /// hold, so the hook always gives up on its own first, and for the prompt and end-of-turn hooks, for "Have Claude ask
 /// what's next". With `hands_free` too, it waits for the tool hook, which hands Claude messages sent from the list.
 pub fn install(exe: &Path, note: &NoteSettings, hold: Option<u64>, hands_free: bool) -> Result<(), String> {
-    let exe = exe.display().to_string().replace('"', "\\\"");
+    let exe = crate::platform::command_path(exe);
     let command = format!("\"{exe}\" {HOOK_ARG}");
     edit_settings(|settings| {
         remove_ours(settings);

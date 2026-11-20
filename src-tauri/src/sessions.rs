@@ -897,7 +897,7 @@ impl Sessions {
                 *entry = (id, h);
             }
         }
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
         let mut list: Vec<_> = self.sessions.iter().collect();
         list.sort_by(|a, b| b.1.heard.cmp(&a.1.heard));
         let list: Vec<Value> = list
@@ -944,16 +944,8 @@ impl Session {
     }
 }
 
-/// Is this process still running? Signal 0 checks without sending anything. A process we're not allowed to signal is
-/// still running; only "no such process" means it's gone.
 fn running(pid: i32) -> bool {
-    unsafe extern "C" {
-        fn kill(pid: i32, sig: i32) -> i32;
-    }
-    const ESRCH: i32 = 3;
-    // SAFETY: kill with signal 0 only checks that the process exists and sends nothing
-    let signalled = unsafe { kill(pid, 0) } == 0;
-    signalled || std::io::Error::last_os_error().raw_os_error() != Some(ESRCH)
+    crate::platform::running(pid)
 }
 
 /// A project's name as we show it: the last part of the folder it's in.
@@ -978,7 +970,8 @@ fn short_command(command: &str) -> String {
     let skip = words.iter().take_while(|w| assignment(w)).count();
     let step = words.get(skip).and_then(|first| step.find(first)).map_or(step, |at| &step[at..]);
     let (program, rest) = step.split_once(char::is_whitespace).unwrap_or((step, ""));
-    let program = program.rsplit('/').next().unwrap_or(program);
+    let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let program = program.strip_suffix(".exe").unwrap_or(program);
     // A script written into the command, which says nothing on its first line: "python3 - <<'EOF'"
     let inline = rest.contains("<<") || (step.contains('\n') && [" -c ", " -e "].iter().any(|f| step.contains(f)));
     let language = match program {

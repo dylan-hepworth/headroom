@@ -6,6 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { bridge, type Made } from "./bridge";
 import { Markdown } from "./markdown";
+import { WINDOWS } from "./platform";
+
+/** Looking at a file: Quick Look over everything on a Mac; on Windows, which has none, its own app. */
+const LOOK = WINDOWS ? "Open" : "Quick Look";
 
 const READABLE = /\.(md|markdown|txt)$/i;
 
@@ -59,7 +63,7 @@ function Thumb({ item, onLook }: { item: Made; onLook: () => void }) {
   useEffect(() => void picture(item.path).then(setSrc), [item.path]);
   if (!src) return null;
   return (
-    <button className="made-thumb" title={`${item.name}: Quick Look`} onClick={onLook}>
+    <button className="made-thumb" title={`${item.name}: ${LOOK}`} onClick={onLook}>
       <img src={src} alt={item.name} />
     </button>
   );
@@ -119,7 +123,10 @@ function Reader({ item, onLook, onClose }: { item: Made; onLook: () => void; onC
       window.removeEventListener("keydown", key, true);
     };
   }, []);
-  const where = item.path.replace(/^\/Users\/[^/]+/, "~").replace(/\/[^/]+$/, "");
+  const where = item.path
+    .replace(/^\/Users\/[^/]+/, "~")
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~")
+    .replace(/[\\/][^\\/]+$/, "");
   return (
     <div className="made-read" ref={box}>
       <div className="made-read-top">
@@ -128,10 +135,10 @@ function Reader({ item, onLook, onClose }: { item: Made; onLook: () => void; onC
         </button>
         <span className="ask-spacer" />
         <button className="ask-btn ghost" onClick={onLook}>
-          Quick Look
+          {LOOK}
         </button>
         <button className="ask-btn ghost" onClick={() => bridge.showMade(item.path)}>
-          Show in Finder
+          {WINDOWS ? "Show in File Explorer" : "Show in Finder"}
         </button>
       </div>
       <div className="made-read-name">

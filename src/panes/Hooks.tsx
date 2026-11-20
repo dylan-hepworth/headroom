@@ -3,6 +3,7 @@ import type { PaneProps } from "../App";
 import { needsAnswer, yourTurn } from "../bridge";
 import { Chat, Hook, Shield } from "../icons";
 import { Popup, Row, Section, Switch } from "../ui";
+import { BAR } from "../platform";
 
 const NEAR = [
   [70, "70%"],
@@ -102,11 +103,11 @@ export default function Hooks({ app, settings, set }: PaneProps) {
         <div className="group">
           <Row
             tile={["green", <Shield />]}
-            title="Approve from the menu bar"
-            detail="Permission requests and Claude's questions drop down from the menu bar icon, to answer right there."
+            title={`Approve from the ${BAR}`}
+            detail={`Permission requests and Claude's questions come up from the ${BAR} icon, to answer right there.`}
             info="While Headroom holds a request, Claude Code's own prompt waits. If you don't answer in time, or Headroom quits, the prompt shows in the terminal as usual."
           >
-            <Switch checked={settings.approvals} onChange={(v) => set("approvals", v)} label="Approve from the menu bar" disabled={off} />
+            <Switch checked={settings.approvals} onChange={(v) => set("approvals", v)} label={`Approve from the ${BAR}`} disabled={off} />
           </Row>
           <Row inset title="If I don't answer, ask in the terminal after">
             <Popup
@@ -164,7 +165,7 @@ export default function Hooks({ app, settings, set }: PaneProps) {
           <Row
             inset
             title="Hands-free"
-            detail="Each question comes with what Claude said that turn, and what's gone on lately. Click the menu bar icon to see every chat waiting on you or at work, reply to finished ones, and send a message to one mid-task. Right-click it for the menu."
+            detail={`Each question comes with what Claude said that turn, and what's gone on lately. Click the ${BAR} icon to see every chat waiting on you or at work, reply to finished ones, and send a message to one mid-task. Right-click it for the menu.`}
             info="Headroom reads Claude's reply, and your recent messages and answers (the last few, shortened), from the session's transcript when the question comes in, and keeps them only until it's answered. Claude is asked to end with a short summary of what it did, which is the only extra it writes. So you can reply from the menu bar, a finished turn waits for a reply (up to the time above), and the chat looks like it's still working meanwhile. It lets go as soon as you open that chat yourself. A message you send a chat at work reaches it after its next step (or right away with Send Now, which stops the command it's running), since Claude Code waits for Headroom after each one (about 20 ms) while this is on."
           >
             <Switch checked={settings.handsFree} onChange={(v) => set("handsFree", v)} label="Hands-free" disabled={off || !settings.approvals} />
@@ -172,7 +173,7 @@ export default function Hooks({ app, settings, set }: PaneProps) {
           <Row
             inset
             title="Show replies right away"
-            detail="A finished turn's reply drops down from the menu bar, like a question, to read and answer. Off, it waits in the list."
+            detail={`A finished turn's reply comes up from the ${BAR}, like a question, to read and answer. Off, it waits in the list.`}
           >
             <Switch
               checked={settings.showReplies}
